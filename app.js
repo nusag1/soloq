@@ -19,7 +19,8 @@ const QUICK = { win: [15, 18, 20, 22, 25], loss: [-10, -13, -15, -18, -20], draw
 const DEF = () => ({
   v: 1, matches: [], sessions: [], customThemes: [], theme: null, activeSession: null, rot: {},
   lastRR: { win: 20, loss: -15, draw: 0 }, undo: null, lastReact: null, lastReview: null,
-  settings: { riotName: '', riotTag: '', voice: true, volume: 0.9, look: 'system', dayStart: 5, cap: 5, radioAuto: true },
+  settings: { riotName: '', riotTag: '', voice: true, volume: 0.9, look: 'system', dayStart: 5, cap: 5, radioAuto: true,
+    bgmTrack: 'yoru', bgmVol: 0.5, bgmMode: 'all' },
 });
 
 // ===== 保存 =====
@@ -82,11 +83,15 @@ let LINES = null;
 let DUR = {};
 const sfx = $('#sfx');
 const radioEl = $('#radioAudio');
+const bgmEl = $('#bgmAudio');
+let BGM = []; // [{id, title, mood, sec}]
 async function loadLines() {
+  const bg = fetch('bgm/index.json').then(r => r.json()).then(j => { BGM = Object.entries(j).map(([id, v]) => ({ id, ...v })); }).catch(() => { BGM = []; });
   try {
     const [a, b] = await Promise.all([fetch('voice/lines.json').then(r => r.json()), fetch('audio/index.json').then(r => r.json()).catch(() => ({}))]);
     LINES = a; DUR = b;
   } catch (e) { LINES = { reactions: {}, radio: [], speakers: {} }; }
+  await bg;
 }
 function clipFor(cat) {
   const list = (LINES && LINES.reactions[cat]) || [];
@@ -299,6 +304,7 @@ function renderToday() {
   const ts = th ? themeStat(th) : null;
   v.innerHTML = `
     <div class="card sachi-card" id="sachi" aria-live="polite" style="margin-top:6px"></div>
+    <div id="bgmMini"></div>
     <h2>今日のセッション</h2>
     ${sess}
     <h2>次の試合のテーマ<span class="sub">ひとつだけ</span></h2>
@@ -311,6 +317,7 @@ function renderToday() {
     <h2>今日の試合<span class="sub">${today.length}試合・${sgn(sum(today, m => m.rr))}RR</span></h2>
     <div class="card">${matchList(today.slice().reverse(), '今日はまだ記録がありません')}</div>`;
   renderSachi();
+  renderBgmMini();
   if (s) drawLine($('#sessChart'), cumPts(sessMatches(s.id)), { empty: '記録すると、ここにRRの線が伸びていきます' });
   const rv = !s && S.lastReview && S.sessions.find(x => x.id === S.lastReview);
   if (rv && $('#revChart')) drawLine($('#revChart'), cumPts(sessMatches(rv.id)), { h: 120 });
@@ -485,9 +492,12 @@ function renderRadio() {
       <div class="row" style="margin-top:8px"><button class="btn primary grow" data-act="rplay">${radioEl.paused ? '▶ 再生' : '❚❚ 止める'}</button><button class="btn" data-act="rnext" aria-label="次の回">次 ⏭</button></div>
       <label class="row small" style="margin-top:10px"><input type="checkbox" id="rauto" ${S.settings.radioAuto ? 'checked' : ''}> 終わったら次の回へ</label>
     </div>
+    <h2>BGM<span class="sub">オリジナルのチル ${BGM.length}曲</span></h2>
+    <div id="bgmBox"></div>
     <h2>番組の一覧<span class="sub">${eps.length}本</span></h2>
     <div class="card">${eps.map((e, i) => `<button class="ep ${i === radioIdx ? 'on' : ''}" data-ep="${i}"><span class="n">${i + 1}</span><span class="grow"><div class="t">${esc(e.title)}</div></span><span class="tag">${esc(e.when)}</span><span class="tiny muted num">${fmtSec((DUR[e.id] || {}).sec)}</span></button>`).join('')}</div>`;
   $('#rauto').addEventListener('change', e => { S.settings.radioAuto = e.target.checked; save(); });
+  renderBgm();
   updateRadioProg();
 }
 function playRadio(i) {
@@ -497,9 +507,6 @@ function playRadio(i) {
   sfx.pause();
   radioEl.src = `audio/${e.id}.mp3`; radioEl.volume = S.settings.volume;
   const p = radioEl.play(); if (p) p.catch(() => {});
-  if ('mediaSession' in navigator) {
-    try { navigator.mediaSession.metadata = new MediaMetadata({ title: e.title, artist: '幸とソロQ ラジオ', album: 'VOICEVOX:春日部つむぎ、VOICEVOX:冥鳴ひまり' }); } catch (err) { }
-  }
   renderRadio();
 }
 function updateRadioProg() {
@@ -510,14 +517,125 @@ function updateRadioProg() {
 }
 radioEl.addEventListener('timeupdate', updateRadioProg);
 radioEl.addEventListener('ended', () => { if (S.settings.radioAuto) playRadio(radioIdx + 1); else renderRadio(); });
-radioEl.addEventListener('play', () => { if ($('#v-radio').classList.contains('on')) renderRadio(); });
+radioEl.addEventListener('play', () => { setMedia('radio'); if ($('#v-radio').classList.contains('on')) renderRadio(); });
 radioEl.addEventListener('pause', () => { if ($('#v-radio').classList.contains('on')) renderRadio(); });
-if ('mediaSession' in navigator) {
+
+// ===== BGM（幸とソロQ オリジナル） =====
+// HTMLAudioElement で鳴らす（画面を消しても iPhone で止まらないように。WebAudio は使わない）
+// ダッキング：幸の声・ラジオが鳴っているあいだは BGM を 25% に下げ、終わったら戻す（ラジオの下でうっすら流れる）。
+// iPhone の Safari は audio.volume を変えられないので、その場合は声・ラジオのあいだ BGM を一時停止して、終わったら続きから再開する
+const DUCK = 0.25;
+const VOL_OK = (() => { try { const a = new Audio(); a.volume = 0.5; return Math.abs(a.volume - 0.5) < 0.01; } catch (e) { return false; } })();
+const ducks = new Set();
+let bgmAutoPaused = false, bgmRamp = null, unduckT = null;
+const MODES = [['one', '1曲リピート'], ['all', '順番に'], ['shuffle', 'シャッフル']];
+function bgmCur() { return BGM.find(t => t.id === S.settings.bgmTrack) || BGM[0] || null; }
+function bgmTarget() { return S.settings.bgmVol * (ducks.size ? DUCK : 1); }
+function rampBgm(ms = 350) {
+  if (!VOL_OK) return;
+  clearInterval(bgmRamp);
+  const to = bgmTarget(), from = bgmEl.volume, n = Math.max(1, Math.round(ms / 30)); let i = 0;
+  bgmRamp = setInterval(() => { i++; bgmEl.volume = Math.min(1, Math.max(0, from + (to - from) * i / n)); if (i >= n) clearInterval(bgmRamp); }, 30);
+}
+function duck(reason, on) {
+  if (on) { clearTimeout(unduckT); ducks.add(reason); }
+  else ducks.delete(reason);
+  renderBgmMini();
+  if (VOL_OK) { if (on) rampBgm(250); else { clearTimeout(unduckT); unduckT = setTimeout(() => rampBgm(700), 400); } return; }
+  if (on && !bgmEl.paused) { bgmAutoPaused = true; bgmEl.pause(); }
+  if (!on && !ducks.size && bgmAutoPaused) {
+    clearTimeout(unduckT);
+    unduckT = setTimeout(() => { if (!ducks.size && bgmAutoPaused) { bgmAutoPaused = false; bgmEl.play().catch(() => {}); } }, 600);
+  }
+}
+sfx.addEventListener('play', () => duck('voice', true));
+for (const ev of ['ended', 'pause', 'error']) sfx.addEventListener(ev, () => duck('voice', false));
+radioEl.addEventListener('play', () => duck('radio', true));
+for (const ev of ['ended', 'pause', 'error']) radioEl.addEventListener(ev, () => duck('radio', false));
+function loadBgm(id) {
+  const t = BGM.find(x => x.id === id) || BGM[0]; if (!t) return null;
+  if (S.settings.bgmTrack !== t.id) { S.settings.bgmTrack = t.id; save(); }
+  if (!bgmEl.src.endsWith(`bgm/${t.id}.mp3`)) bgmEl.src = `bgm/${t.id}.mp3`;
+  bgmEl.loop = S.settings.bgmMode === 'one';
+  return t;
+}
+function playBgm(id) {
+  const t = loadBgm(id || S.settings.bgmTrack); if (!t) return;
+  bgmAutoPaused = false;
+  if (!VOL_OK && !radioEl.paused) radioEl.pause(); // 音量を下げられない端末では、あとから選んだほうを優先
+  if (VOL_OK) { clearInterval(bgmRamp); bgmEl.volume = bgmTarget(); }
+  const p = bgmEl.play(); if (p) p.catch(() => {});
+  renderBgm();
+}
+function pauseBgm() { bgmAutoPaused = false; bgmEl.pause(); }
+function toggleBgm() { if (bgmEl.paused) playBgm(); else pauseBgm(); }
+function nextBgm(dir = 1) {
+  if (!BGM.length) return;
+  const i = Math.max(0, BGM.findIndex(t => t.id === S.settings.bgmTrack));
+  let j;
+  if (S.settings.bgmMode === 'shuffle' && BGM.length > 1) { do { j = Math.floor(Math.random() * BGM.length); } while (j === i); }
+  else j = (i + dir + BGM.length) % BGM.length;
+  playBgm(BGM[j].id);
+}
+function setBgmMode(m) { S.settings.bgmMode = m; bgmEl.loop = m === 'one'; save(); renderBgm(); }
+function setBgmVol(v) { S.settings.bgmVol = v; save(); if (VOL_OK) { clearInterval(bgmRamp); bgmEl.volume = bgmTarget(); } }
+bgmEl.addEventListener('ended', () => { if (!bgmEl.loop) nextBgm(1); });
+bgmEl.addEventListener('play', () => { setMedia('bgm'); renderBgm(); });
+bgmEl.addEventListener('pause', () => { if (!radioEl.paused) setMedia('radio'); renderBgm(); });
+bgmEl.addEventListener('timeupdate', () => {
+  const bar = $('#bprog'); if (!bar) return;
+  const d = bgmEl.duration || (bgmCur() || {}).sec || 0;
+  bar.style.width = d ? Math.min(100, bgmEl.currentTime / d * 100) + '%' : '0';
+});
+radioEl.addEventListener('pause', () => { if (!bgmEl.paused) setMedia('bgm'); });
+function bgmMiniHTML() {
+  const t = bgmCur(); if (!t) return '';
+  const on = !bgmEl.paused;
+  return `<div class="card bgm-mini"><span class="bgm-ic" aria-hidden="true">🎵</span><span class="grow t"><span class="tiny muted">BGM${on ? (ducks.size ? '・声のあいだ小さく' : '・再生中') : ''}</span><br><b>${esc(t.title)}</b></span>
+    <button class="iconbtn" data-act="bplay" aria-label="${on ? 'BGMを止める' : 'BGMを流す'}">${on ? '❚❚' : '▶'}</button><button class="iconbtn" data-act="bnext" aria-label="次の曲">⏭</button></div>`;
+}
+function bgmBoxHTML() {
+  const t = bgmCur();
+  if (!t) return '<div class="card small muted">BGM を読みこめませんでした</div>';
+  const on = !bgmEl.paused;
+  return `<div class="card player">
+      <div class="tiny muted">${esc(t.mood)}・作業用のチル</div>
+      <div class="ttl">${esc(t.title)}</div>
+      <div class="prog"><i id="bprog"></i></div>
+      <div class="row" style="margin-top:8px"><button class="btn primary grow" data-act="bplay">${on ? '❚❚ 止める' : '▶ BGMを流す'}</button><button class="btn" data-act="bnext" aria-label="次の曲">次 ⏭</button></div>
+      <div class="seg" style="margin-top:10px" role="radiogroup" aria-label="くり返し">${MODES.map(([k, l]) => `<button class="${S.settings.bgmMode === k ? 'on' : ''}" data-bmode="${k}" role="radio" aria-checked="${S.settings.bgmMode === k}">${l}</button>`).join('')}</div>
+      ${VOL_OK ? `<div class="field" style="margin-top:4px"><label for="bvol">BGMの音量</label><input type="range" id="bvol" min="0.05" max="1" step="0.05" value="${S.settings.bgmVol}" style="width:150px"></div>`
+        : '<p class="tiny muted" style="margin:8px 0 0">この端末では BGM の音量は本体のボタンで。</p>'}
+      <p class="tiny muted" style="margin:6px 0 0">幸の声・ラジオが鳴るあいだは、BGM を${VOL_OK ? '小さく' : 'いったん止めて'}、終わったら戻します。</p>
+    </div>
+    <div class="card" style="margin-top:10px">${BGM.map(x => `<button class="ep ${x.id === t.id ? 'on' : ''}" data-bt="${x.id}"><span class="n" aria-hidden="true">${x.id === t.id && on ? '♪' : '🎵'}</span><span class="grow"><div class="t">${esc(x.title)}</div></span><span class="tag">${esc(x.mood)}</span><span class="tiny muted num">${fmtSec(x.sec)}</span></button>`).join('')}
+      <p class="tiny muted" style="margin:8px 0 0">BGM：幸とソロQ オリジナル（開発部）</p></div>`;
+}
+function renderBgmMini() { const m = $('#bgmMini'); if (m) m.innerHTML = bgmMiniHTML(); }
+function renderBgm() {
+  renderBgmMini();
+  const b = $('#bgmBox'); if (b) {
+    b.innerHTML = bgmBoxHTML();
+    const v = $('#bvol'); if (v) v.addEventListener('input', e => setBgmVol(+e.target.value));
+  }
+}
+// ロック画面のボタンは、いま鳴っているほう（あとから流したほう）を動かす
+let mediaOwner = 'radio';
+function setMedia(owner) {
+  mediaOwner = owner;
+  if (!('mediaSession' in navigator)) return;
+  const art = [{ src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' }];
   try {
-    navigator.mediaSession.setActionHandler('nexttrack', () => playRadio(radioIdx + 1));
-    navigator.mediaSession.setActionHandler('play', () => radioEl.play());
-    navigator.mediaSession.setActionHandler('pause', () => radioEl.pause());
-  } catch (e) { }
+    if (owner === 'bgm') { const t = bgmCur(); if (t) navigator.mediaSession.metadata = new MediaMetadata({ title: t.title, artist: 'BGM：幸とソロQ オリジナル（開発部）', album: '幸とソロQ', artwork: art }); }
+    else { const e = ((LINES && LINES.radio) || [])[radioIdx]; if (e) navigator.mediaSession.metadata = new MediaMetadata({ title: e.title, artist: '幸とソロQ ラジオ', album: 'VOICEVOX:春日部つむぎ、VOICEVOX:冥鳴ひまり', artwork: art }); }
+  } catch (err) { }
+}
+if ('mediaSession' in navigator) {
+  const h = (a, f) => { try { navigator.mediaSession.setActionHandler(a, f); } catch (e) { } };
+  h('play', () => mediaOwner === 'bgm' ? playBgm() : radioEl.play().catch(() => {}));
+  h('pause', () => mediaOwner === 'bgm' ? pauseBgm() : radioEl.pause());
+  h('nexttrack', () => mediaOwner === 'bgm' ? nextBgm(1) : playRadio(radioIdx + 1));
+  h('previoustrack', () => mediaOwner === 'bgm' ? nextBgm(-1) : playRadio(radioIdx - 1));
 }
 
 // ===== 画面：設定 =====
@@ -546,7 +664,7 @@ function renderSettings() {
       <div class="row wrapr"><button class="btn sm" data-act="export">書き出す（JSON）</button><button class="btn sm ghost" data-act="import">読み込む</button><input type="file" id="impFile" accept="application/json,.json" hidden></div>
     </div>
     <h2>クレジット</h2>
-    <div class="card small">音声：VOICEVOX:春日部つむぎ、VOICEVOX:冥鳴ひまり<br><span class="muted">ゲームの名前は説明のために使っています。Riot Games とは関係のない、個人のファンメイドのツールです。</span></div>`;
+    <div class="card small">音声：VOICEVOX:春日部つむぎ、VOICEVOX:冥鳴ひまり<br>BGM：幸とソロQ オリジナル（開発部）<br><span class="muted">ゲームの名前は説明のために使っています。Riot Games とは関係のない、個人のファンメイドのツールです。</span></div>`;
   const saveRiot = () => { S.settings.riotName = $('#riotName').value.trim().slice(0, 32); S.settings.riotTag = $('#riotTag').value.trim().replace(/^#/, '').slice(0, 8); save(); };
   $('#riotName').addEventListener('change', saveRiot); $('#riotTag').addEventListener('change', saveRiot);
   $('#voiceOn').addEventListener('change', e => { S.settings.voice = e.target.checked; save(); });
@@ -589,7 +707,7 @@ function go(t) {
   window.scrollTo(0, 0);
 }
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-tab],[data-tab-go],[data-act],[data-th],[data-edit],[data-res],[data-rr],[data-agent],[data-map],[data-mark],[data-period],[data-ep],[data-look]');
+  const t = e.target.closest('[data-tab],[data-tab-go],[data-act],[data-th],[data-edit],[data-res],[data-rr],[data-agent],[data-map],[data-mark],[data-period],[data-ep],[data-look],[data-bt],[data-bmode]');
   if (!t) return;
   const d = t.dataset;
   if (d.tab) return go(d.tab);
@@ -603,6 +721,8 @@ document.addEventListener('click', e => {
   if (d.mark) { F.mark = F.mark === d.mark ? null : d.mark; return renderSheet(); }
   if (d.period) { period = d.period; return renderStats(); }
   if (d.ep) { const i = +d.ep; if (i === radioIdx && !radioEl.paused) radioEl.pause(); else if (i === radioIdx && radioEl.src) radioEl.play().catch(() => {}); else playRadio(i); return; }
+  if (d.bt) { if (d.bt === S.settings.bgmTrack && !bgmEl.paused) pauseBgm(); else playBgm(d.bt); return; }
+  if (d.bmode) return setBgmMode(d.bmode);
   if (d.look) { S.settings.look = d.look; save(); applyLook(); return renderSettings(); }
   const a = d.act;
   if (a === 'scrim') { if (e.target === t) { F = null; renderSheet(); } return; }
@@ -629,6 +749,8 @@ document.addEventListener('click', e => {
   }
   if (a === 'rplay') { if (radioIdx < 0) playRadio(0); else if (radioEl.paused) radioEl.play().catch(() => {}); else radioEl.pause(); return; }
   if (a === 'rnext') return playRadio(radioIdx + 1);
+  if (a === 'bplay') return toggleBgm();
+  if (a === 'bnext') return nextBgm(1);
   if (a === 'testVoice') { const c = (LINES.reactions.win || [])[0]; if (c) { radioEl.pause(); playClip(c); } return; }
   if (a === 'export') return exportData();
   if (a === 'import') return $('#impFile').click();
@@ -637,7 +759,9 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && F) { F = n
 let rsT; addEventListener('resize', () => { clearTimeout(rsT); rsT = setTimeout(renderAll, 200); });
 
 // テスト・のちの拡張用
-window.__soloq = { get S() { return S; }, load, save, addMatch, afterMatch, undoLast, typicalRR, rrChips, startSession, endSession, buildReview, openSheet, saveSheet, get F() { return F; }, go, dayKey, themeStat };
+window.__soloq = { get S() { return S; }, load, save, addMatch, afterMatch, undoLast, typicalRR, rrChips, startSession, endSession, buildReview, openSheet, saveSheet, get F() { return F; }, go, dayKey, themeStat,
+  bgm: { el: bgmEl, get list() { return BGM; }, play: playBgm, pause: pauseBgm, next: nextBgm, setMode: setBgmMode, setVol: setBgmVol, ducks, VOL_OK, get owner() { return mediaOwner; } },
+  playClip, findClip, get LINES() { return LINES; } };
 
 (async function init() {
   load(); applyLook();

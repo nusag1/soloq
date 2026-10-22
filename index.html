@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-title" content="ソロQ">
 <meta name="theme-color" content="#0d1016">
 <!-- /pwa -->
-<meta name="description" content="ソロキューのおとも。戦績を10秒で記録、1試合1テーマ、今日のセッション、2人の幸のラジオ。">
+<meta name="description" content="ソロキューのおとも。戦績を10秒で記録、1試合1テーマ、今日のセッション、2人の幸のラジオ、オリジナルのチルBGM。">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -196,6 +196,9 @@ details summary { cursor: pointer; color: var(--muted); font-size: 14px; margin-
 .ep:first-child { border-top: 0; }
 .ep.on .t { color: var(--accent); font-weight: 800; }
 .ep .n { width: 28px; height: 28px; border-radius: 8px; background: var(--bg-2); display: grid; place-items: center; font-size: 12px; flex: none; }
+.bgm-mini { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding: 8px 10px 8px 12px; }
+.bgm-mini .t { line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bgm-ic { font-size: 18px; flex: none; }
 .tag { font-size: 11px; border-radius: 6px; padding: 1px 6px; background: var(--bg-2); color: var(--muted); white-space: nowrap; }
 
 /* 下のタブ */
@@ -220,7 +223,7 @@ a { color: var(--accent); }
   <section class="view" id="v-stats"></section>
   <section class="view" id="v-radio"></section>
   <section class="view" id="v-settings"></section>
-  <p class="credit">音声：VOICEVOX:春日部つむぎ、VOICEVOX:冥鳴ひまり<br>Riot Games とは関係のない、個人のファンメイドのツールです</p>
+  <p class="credit">音声：VOICEVOX:春日部つむぎ、VOICEVOX:冥鳴ひまり<br>BGM：幸とソロQ オリジナル（開発部）<br>Riot Games とは関係のない、個人のファンメイドのツールです</p>
 </div>
 <nav class="tabs" aria-label="画面の切りかえ"><div class="in">
   <button data-tab="today" class="on"><span class="i" aria-hidden="true">🎮</span>今日</button>
@@ -231,6 +234,7 @@ a { color: var(--accent); }
 <div id="sheetHost"></div>
 <audio id="sfx" preload="none"></audio>
 <audio id="radioAudio" preload="none"></audio>
+<audio id="bgmAudio" preload="none"></audio>
 <script src="app.js"></script>
 <!-- pwa -->
 <script>if ('serviceWorker' in navigator && location.protocol !== 'file:') addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));</script>
