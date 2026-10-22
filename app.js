@@ -18,7 +18,7 @@ const QUICK = { win: [15, 18, 20, 22, 25], loss: [-10, -13, -15, -18, -20], draw
 
 const DEF = () => ({
   v: 1, matches: [], sessions: [], customThemes: [], theme: null, activeSession: null, rot: {},
-  lastRR: { win: 20, loss: -15, draw: 0 }, recentAgents: [], lastReact: null, lastReview: null,
+  lastRR: { win: 20, loss: -15, draw: 0 }, undo: null, lastReact: null, lastReview: null,
   settings: { riotName: '', riotTag: '', voice: true, volume: 0.9, look: 'system', dayStart: 5, cap: 5, radioAuto: true },
 });
 
@@ -50,9 +50,11 @@ const hm = ts => { const d = new Date(ts); return `${d.getHours()}:${String(d.ge
 function hash(s) { let h = 2166136261; for (const c of String(s)) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return h >>> 0; }
 const pick = (arr, seed) => arr[hash(seed) % arr.length];
 let toastT;
-function toast(msg) {
+function toast(msg, actLabel, act) {
   let t = $('.toast'); if (!t) { t = document.createElement('div'); t.className = 'toast'; t.setAttribute('role', 'status'); document.body.appendChild(t); }
-  t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, 2600);
+  t.innerHTML = `<span>${esc(msg)}</span>${actLabel ? `<button class="toastbtn">${esc(actLabel)}</button>` : ''}`;
+  if (actLabel) t.querySelector('button').onclick = () => { t.hidden = true; act(); };
+  t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, actLabel ? 7000 : 2600);
 }
 const sum = (a, f) => a.reduce((s, x) => s + (f(x) || 0), 0);
 const allThemes = () => THEMES.concat(S.customThemes.filter(t => !THEMES.includes(t)));
@@ -121,7 +123,6 @@ function duoHTML(lines) {
 // ===== 試合の記録 =====
 function addMatch(m, { quiet = false } = {}) {
   S.matches.push(m);
-  if (m.agent) S.recentAgents = [m.agent].concat(S.recentAgents.filter(a => a !== m.agent)).slice(0, 6);
   if (m.result && typeof m.rr === 'number') S.lastRR[m.result] = m.rr;
   save();
   if (!quiet) afterMatch(m);
@@ -148,30 +149,6 @@ function afterMatch(m) {
   if (s && list.length >= s.cap && cat !== 'cap_reached') notes.push(`決めていた ${s.cap}試合に届いています。今日はここまでにしませんか？`);
   react(cat, notes);
 }
-// 自動取り込み（fetcher.js）から来た試合を入れる。extId で重複をはじく
-function importMatches(list) {
-  const have = new Set(S.matches.map(m => m.extId).filter(Boolean));
-  let n = 0;
-  for (const x of list || []) {
-    if (!x || !x.extId || have.has(x.extId) || !RES[x.result] || !x.ts) continue;
-    const sess = S.sessions.find(s => x.ts >= s.start && x.ts <= (s.end || Date.now()));
-    S.matches.push({ id: uid(), ts: +x.ts, result: x.result, rr: typeof x.rr === 'number' ? x.rr : 0, agent: x.agent || '', map: x.map || '',
-      k: x.k ?? null, d: x.d ?? null, a: x.a ?? null, theme: null, mark: null, session: sess ? sess.id : null, src: window.SoloQSource.id, extId: String(x.extId) });
-    have.add(x.extId); n++;
-  }
-  save();
-  return n;
-}
-async function syncFromSource() {
-  const src = window.SoloQSource;
-  if (!src || !src.enabled) return 0;
-  const since = Math.max(0, ...S.matches.filter(m => m.extId).map(m => m.ts));
-  const list = await src.fetchMatches({ name: S.settings.riotName, tag: S.settings.riotTag, since });
-  const n = importMatches(list);
-  renderAll();
-  return n;
-}
-
 // ===== セッション =====
 function startSession(cap, goal) {
   const s = { id: uid(), start: Date.now(), end: null, cap, goal: goal || null, review: null };
@@ -318,6 +295,7 @@ function renderToday() {
     </div>`;
   }
   const th = S.theme;
+  const lastM = S.undo && S.matches.find(m => m.id === S.undo.id);
   const ts = th ? themeStat(th) : null;
   v.innerHTML = `
     <div class="card sachi-card" id="sachi" aria-live="polite" style="margin-top:6px"></div>
@@ -329,6 +307,7 @@ function renderToday() {
       <p class="small muted" style="margin:8px 0 0">${th ? `「${esc(th)}」${ts.n ? `：これまで ${ts.n}回中 ${ts.o}回が○（${pct(ts.o, ts.n)}%）` : '：はじめてのテーマ'}。試合が終わったら ○△× を付けます。` : 'テーマなしでも記録できます。'}</p>
     </div>
     <div style="margin-top:14px"><button class="btn primary block big" data-act="record">＋ 試合を記録</button></div>
+    ${lastM ? `<div class="row small" style="margin-top:8px"><span class="grow muted t" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">直前：${RES[lastM.result]} ${sgn(lastM.rr || 0)}${lastM.agent ? '・' + esc(lastM.agent) : ''}${lastM.map ? '・' + esc(lastM.map) : ''}</span><button class="btn sm ghost" data-act="editLast">直す</button><button class="btn sm ghost" data-act="undo">取り消す</button></div>` : ''}
     <h2>今日の試合<span class="sub">${today.length}試合・${sgn(sum(today, m => m.rr))}RR</span></h2>
     <div class="card">${matchList(today.slice().reverse(), '今日はまだ記録がありません')}</div>`;
   renderSachi();
@@ -348,46 +327,66 @@ function matchList(list, empty) {
     <span class="rr ${cls(m.rr)}">${sgn(m.rr || 0)}</span></button>`).join('')}</div>`;
 }
 
-// ===== 記録シート =====
+// ===== 記録シート（ふつうは 結果 → テーマ○△× → 記録する の3タップ） =====
 let F = null;
+let showAllAgents = false;
+const median = a => { const b = a.slice().sort((x, y) => x - y); return b.length ? b[Math.floor(b.length / 2)] : null; };
+function typicalRR(res) {
+  const r = S.matches.filter(m => m.result === res && typeof m.rr === 'number').sort(byTs).slice(-10).map(m => m.rr);
+  const md = median(r);
+  return md == null ? S.lastRR[res] : md;
+}
+function rrChips(res) {
+  if (!res) return [25, 20, 15, -15, -20];
+  const md = typicalRR(res);
+  const recent = S.matches.filter(m => m.result === res).sort(byTs).slice(-20).map(m => m.rr);
+  const freq = {}; for (const v of recent.concat(QUICK[res])) freq[v] = (freq[v] || 0) + 1;
+  const cand = Object.keys(freq).map(Number).sort((x, y) => (freq[y] - freq[x]) || (Math.abs(x - md) - Math.abs(y - md)));
+  const out = [md]; for (const v of cand) { if (out.length >= 5) break; if (!out.includes(v)) out.push(v); }
+  return out.sort((x, y) => y - x);
+}
+function usage(key) { const c = {}; for (const m of S.matches) if (m[key]) c[m[key]] = (c[m[key]] || 0) + 1; return c; }
+function lastOf(key) { const m = S.matches.slice().sort(byTs).reverse().find(x => x[key]); return m ? m[key] : ''; }
 function openSheet(editId) {
   const m = editId ? S.matches.find(x => x.id === editId) : null;
-  F = m ? { ...m, editId } : { result: null, rr: null, rrTouched: false, agent: S.recentAgents[0] || '', map: '', theme: S.theme, mark: null, k: null, d: null, a: null };
+  showAllAgents = false;
+  F = m ? { ...m, editId } : { result: null, rr: null, rrTouched: false, agent: lastOf('agent'), map: lastOf('map'), theme: S.theme, mark: null, k: null, d: null, a: null };
   renderSheet();
 }
+function saveLabel() { return F.result ? (F.editId ? '直す' : `記録する（${RES[F.result]} ${sgn(F.rr ?? 0)}）`) : '勝ち・負け・引き分けを選んでね'; }
 function renderSheet() {
   const host = $('#sheetHost');
   if (!F) { host.innerHTML = ''; document.body.style.overflow = ''; return; }
   document.body.style.overflow = 'hidden';
-  const recent = S.recentAgents.slice(0, 5);
-  const agents = [...new Set(AGENTS.concat(S.matches.map(m => m.agent).filter(Boolean)))].sort((a, b) => a.localeCompare(b, 'ja'));
+  const keep = host.querySelector('.sheet'); const top = keep ? keep.scrollTop : 0;
+  const cnt = usage('agent');
+  const allAgents = [...new Set(AGENTS.concat(Object.keys(cnt)))];
+  const byUse = allAgents.slice().sort((a, b) => (cnt[b] || 0) - (cnt[a] || 0) || a.localeCompare(b, 'ja'));
+  let shown = showAllAgents ? byUse : byUse.filter(a => cnt[a]).slice(0, 5);
+  if (!showAllAgents && F.agent && !shown.includes(F.agent)) shown = [F.agent].concat(shown).slice(0, 5);
+  if (!shown.length) { shown = byUse; showAllAgents = true; }
   const maps = [...new Set(MAPS.concat(S.matches.map(m => m.map).filter(Boolean)))];
+  const chips = rrChips(F.result);
   host.innerHTML = `<div class="scrim" data-act="scrim"><div class="sheet" role="dialog" aria-modal="true" aria-label="試合を記録">
     <div class="row"><h3 class="grow">${F.editId ? '試合を直す' : '試合を記録'}</h3><button class="iconbtn" data-act="close" aria-label="閉じる">✕</button></div>
-    <div class="lbl">結果</div>
-    <div class="res3">${['win', 'loss', 'draw'].map(r => `<button class="res ${r} ${F.result === r ? 'on' : ''}" data-res="${r}" aria-pressed="${F.result === r}">${RES[r]}</button>`).join('')}</div>
-    <div class="lbl">RRの増減</div>
-    <div class="row wrapr"><span class="stepper"><button class="iconbtn" data-act="rrm" aria-label="1へらす">−</button><input id="rrIn" type="number" inputmode="numeric" value="${F.rr ?? ''}" placeholder="0" aria-label="RRの増減"><button class="iconbtn" data-act="rrp" aria-label="1ふやす">＋</button></span><button class="btn sm ghost" data-act="rrflip" aria-label="プラスとマイナスを入れかえ">±</button></div>
-    <div class="chips" style="margin-top:8px">${(QUICK[F.result] || QUICK.win.concat(QUICK.loss.slice(0, 2))).map(q => `<button class="chip ${F.rr === q ? 'on' : ''}" data-rr="${q}">${sgn(q)}</button>`).join('')}</div>
-    <div class="lbl">エージェント</div>
-    <div class="chips">${recent.map(a => `<button class="chip ${F.agent === a ? 'on' : ''}" data-agent="${esc(a)}">${esc(a)}</button>`).join('')}
-      <select id="agentSel" aria-label="エージェントを選ぶ" style="min-height:36px;border-radius:999px"><option value="">${recent.length ? 'ほか…' : '選ぶ…'}</option>${agents.map(a => `<option ${F.agent === a ? 'selected' : ''}>${esc(a)}</option>`).join('')}<option value="__new">＋自分で入力</option></select></div>
-    <div class="lbl">マップ</div>
-    <div class="grid3">${maps.map(p => `<button class="chip ${F.map === p ? 'on' : ''}" data-map="${esc(p)}">${esc(p)}</button>`).join('')}</div>
-    <div class="lbl">テーマ${F.theme ? `「${esc(F.theme)}」はできた？` : ''}</div>
+    <div class="res3" style="margin-top:8px">${['win', 'loss', 'draw'].map(r => `<button class="res ${r} ${F.result === r ? 'on' : ''}" data-res="${r}" aria-pressed="${F.result === r}">${RES[r]}</button>`).join('')}</div>
+    <div class="lbl">RR</div>
+    <div class="rrrow">${chips.map(q => `<button class="chip ${F.rr === q ? 'on' : ''}" data-rr="${q}">${sgn(q)}</button>`).join('')}</div>
+    <div class="row" style="margin-top:8px"><span class="stepper"><button class="iconbtn" data-act="rrm" aria-label="1へらす">−</button><input id="rrIn" type="number" inputmode="numeric" value="${F.rr ?? ''}" placeholder="0" aria-label="RRの増減"><button class="iconbtn" data-act="rrp" aria-label="1ふやす">＋</button></span><button class="btn sm ghost" data-act="rrflip" aria-label="プラスとマイナスを入れかえ">±</button></div>
+    <div class="lbl">テーマ${F.theme ? `「${esc(F.theme)}」` : ''}</div>
     ${F.theme ? `<div class="marks">${['o', 'm', 'x'].map(k => `<button class="mark ${k} ${F.mark === k ? 'on' : ''}" data-mark="${k}" aria-pressed="${F.mark === k}"><b>${MARK[k]}</b>${MARKW[k]}</button>`).join('')}</div>` :
       `<p class="small muted" style="margin:0">テーマなし（「今日」の画面で選べます）</p>`}
+    <div class="lbl">エージェント <span class="muted" style="font-weight:500">前回のまま・よく使う順</span></div>
+    <div class="grid3">${shown.map(a => `<button class="chip ${F.agent === a ? 'on' : ''}" data-agent="${esc(a)}">${esc(a)}</button>`).join('')}${showAllAgents ? `<button class="chip add" data-act="newAgent">＋入力</button>` : `<button class="chip add" data-act="moreAgents">ほか…</button>`}</div>
+    <div class="lbl">マップ <span class="muted" style="font-weight:500">前回のまま</span></div>
+    <div class="grid3">${maps.map(p => `<button class="chip ${F.map === p ? 'on' : ''}" data-map="${esc(p)}">${esc(p)}</button>`).join('')}</div>
     <details ${F.k != null ? 'open' : ''}><summary>キル / デス / アシスト（なくてもOK）</summary>
       <div class="kda"><label>キル<input id="kIn" type="number" inputmode="numeric" min="0" value="${F.k ?? ''}"></label><label>デス<input id="dIn" type="number" inputmode="numeric" min="0" value="${F.d ?? ''}"></label><label>アシスト<input id="aIn" type="number" inputmode="numeric" min="0" value="${F.a ?? ''}"></label></div></details>
-    <div class="savebar"><button class="btn primary block big" data-act="saveMatch" ${F.result ? '' : 'disabled'}>${F.result ? (F.editId ? '直す' : '記録する') : '結果を選んでね'}</button></div>
-    ${F.editId ? `<button class="btn ghost block" style="margin-top:8px;color:var(--loss)" data-act="delMatch">この試合を消す</button>` : ''}
+    ${F.editId ? `<button class="btn ghost block" style="margin-top:12px;color:var(--loss)" data-act="delMatch">この試合を消す</button>` : ''}
+    <div class="savebar"><button class="btn primary block big" data-act="saveMatch" ${F.result ? '' : 'disabled'}>${saveLabel()}</button></div>
   </div></div>`;
-  const rr = $('#rrIn'); rr.addEventListener('input', () => { F.rr = rr.value === '' ? null : Math.round(+rr.value); F.rrTouched = true; });
-  $('#agentSel').addEventListener('change', e => {
-    let v = e.target.value;
-    if (v === '__new') { v = (prompt('エージェント名') || '').trim().slice(0, 20); }
-    if (v) { F.agent = v; } renderSheet();
-  });
+  if (keep) host.querySelector('.sheet').scrollTop = top;
+  const rr = $('#rrIn'); rr.addEventListener('input', () => { F.rr = rr.value === '' ? null : Math.round(+rr.value); F.rrTouched = true; $('[data-act=saveMatch]').textContent = saveLabel(); });
   for (const id of ['k', 'd', 'a']) $(`#${id}In`).addEventListener('input', e => { F[id] = e.target.value === '' ? null : Math.max(0, Math.round(+e.target.value)); });
 }
 function saveSheet() {
@@ -401,11 +400,20 @@ function saveSheet() {
   }
   const s = active();
   const m = { id: uid(), ts: Date.now(), result: F.result, rr, agent: F.agent, map: F.map, theme: F.theme || null, mark: F.theme ? F.mark : null,
-    k: F.k, d: F.d, a: F.a, session: s ? s.id : null, src: 'manual', extId: null };
+    k: F.k, d: F.d, a: F.a, session: s ? s.id : null };
+  S.undo = { id: m.id, react: S.lastReact, rot: { ...S.rot }, lastRR: { ...S.lastRR } };
   F = null; renderSheet();
   addMatch(m);
   renderAll();
   window.scrollTo({ top: 0, behavior: 'smooth' });
+  toast(`記録しました：${RES[m.result]} ${sgn(rr)}`, '取り消す', undoLast);
+}
+// 直前の記録を取り消す（反応もひとつ前に戻す）
+function undoLast() {
+  const u = S.undo; if (!u) return;
+  S.matches = S.matches.filter(m => m.id !== u.id);
+  S.lastReact = u.react; S.rot = u.rot; S.lastRR = u.lastRR; S.undo = null;
+  sfx.pause(); save(); renderAll(); toast('取り消しました');
 }
 
 // ===== 画面：戦績 =====
@@ -515,7 +523,6 @@ if ('mediaSession' in navigator) {
 // ===== 画面：設定 =====
 function renderSettings() {
   const st = S.settings;
-  const src = window.SoloQSource || {};
   $('#v-settings').innerHTML = `
     <h2>Riot ID<span class="sub">tracker.gg を開くときだけ使う</span></h2>
     <div class="card">
@@ -532,12 +539,6 @@ function renderSettings() {
     <div class="card">
       <div class="field"><span>色</span><div class="seg">${[['system', '自動'], ['dark', 'ダーク'], ['light', 'ライト']].map(([k, t]) => `<button class="${st.look === k ? 'on' : ''}" data-look="${k}">${t}</button>`).join('')}</div></div>
       <div class="field"><label for="dayStart">1日の区切り</label><select id="dayStart">${[0, 3, 4, 5, 6, 7, 8].map(h => `<option value="${h}" ${st.dayStart === h ? 'selected' : ''}>${h}時</option>`).join('')}</select></div>
-    </div>
-    <h2>戦績の取り込み</h2>
-    <div class="card">
-      <div class="field"><span>いまの方法</span><b>${esc(src.label || '手入力のみ')}</b></div>
-      <p class="tiny muted" style="margin:4px 0 8px">自動の取り込みはまだありません（外部のサービスにはつながっていません）。</p>
-      <button class="btn sm ghost" data-act="sync" ${src.enabled ? '' : 'disabled'}>いま取り込む</button>
     </div>
     <h2>データ</h2>
     <div class="card">
@@ -595,8 +596,8 @@ document.addEventListener('click', e => {
   if (d.tabGo) return go(d.tabGo);
   if (d.th !== undefined && !d.act) { S.theme = S.theme === d.th ? null : d.th; save(); return renderToday(); }
   if (d.edit) return openSheet(d.edit);
-  if (d.res) { F.result = d.res; if (!F.rrTouched && !F.editId) F.rr = S.lastRR[d.res]; return renderSheet(); }
-  if (d.rr) { F.rr = +d.rr; F.rrTouched = true; return renderSheet(); }
+  if (d.res) { F.result = d.res; if (!F.editId && (!F.rrTouched || Math.sign(F.rr || 0) !== Math.sign(typicalRR(d.res)))) { F.rr = typicalRR(d.res); F.rrTouched = false; } return renderSheet(); }
+  if (d.rr) { F.rr = +d.rr; F.rrTouched = true; if (!F.result) F.result = F.rr > 0 ? 'win' : F.rr < 0 ? 'loss' : 'draw'; return renderSheet(); }
   if (d.agent) { F.agent = d.agent; return renderSheet(); }
   if (d.map) { F.map = F.map === d.map ? '' : d.map; return renderSheet(); }
   if (d.mark) { F.mark = F.mark === d.mark ? null : d.mark; return renderSheet(); }
@@ -607,10 +608,14 @@ document.addEventListener('click', e => {
   if (a === 'scrim') { if (e.target === t) { F = null; renderSheet(); } return; }
   if (a === 'close') { F = null; return renderSheet(); }
   if (a === 'record') return openSheet();
+  if (a === 'moreAgents') { showAllAgents = true; return renderSheet(); }
+  if (a === 'newAgent') { const v = (prompt('エージェント名') || '').trim().slice(0, 20); if (v) F.agent = v; return renderSheet(); }
+  if (a === 'undo') return undoLast();
+  if (a === 'editLast') { if (S.undo) openSheet(S.undo.id); return; }
   if (a === 'saveMatch') return saveSheet();
-  if (a === 'delMatch') { if (confirm('この試合の記録を消しますか？（もとに戻せません）')) { S.matches = S.matches.filter(m => m.id !== F.editId); save(); F = null; renderSheet(); renderAll(); toast('消しました'); } return; }
-  if (a === 'rrm' || a === 'rrp') { F.rr = (F.rr ?? 0) + (a === 'rrp' ? 1 : -1); F.rrTouched = true; $('#rrIn').value = F.rr; return; }
-  if (a === 'rrflip') { F.rr = -(F.rr ?? 0); F.rrTouched = true; $('#rrIn').value = F.rr; return; }
+  if (a === 'delMatch') { if (confirm('この試合の記録を消しますか？（もとに戻せません）')) { S.matches = S.matches.filter(m => m.id !== F.editId); if (S.undo && S.undo.id === F.editId) S.undo = null; save(); F = null; renderSheet(); renderAll(); toast('消しました'); } return; }
+  if (a === 'rrm' || a === 'rrp') { F.rr = (F.rr ?? 0) + (a === 'rrp' ? 1 : -1); F.rrTouched = true; return renderSheet(); }
+  if (a === 'rrflip') { F.rr = -(F.rr ?? 0); F.rrTouched = true; return renderSheet(); }
   if (a === 'capm' || a === 'capp') { const i = $('#capIn'); i.value = Math.min(30, Math.max(1, (+i.value || 5) + (a === 'capp' ? 1 : -1))); return; }
   if (a === 'start') { const cap = Math.min(30, Math.max(1, Math.round(+$('#capIn').value || 5))); const g = Math.round(+$('#goalIn').value || 0); return startSession(cap, g > 0 ? g : null); }
   if (a === 'end') { if (confirm('今日のセッションを終えて、講評を見ますか？')) endSession(); return; }
@@ -627,13 +632,12 @@ document.addEventListener('click', e => {
   if (a === 'testVoice') { const c = (LINES.reactions.win || [])[0]; if (c) { radioEl.pause(); playClip(c); } return; }
   if (a === 'export') return exportData();
   if (a === 'import') return $('#impFile').click();
-  if (a === 'sync') { syncFromSource().then(n => toast(`${n}試合を取り込みました`)).catch(() => toast('取り込めませんでした')); return; }
 });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && F) { F = null; renderSheet(); } });
 let rsT; addEventListener('resize', () => { clearTimeout(rsT); rsT = setTimeout(renderAll, 200); });
 
 // テスト・のちの拡張用
-window.__soloq = { get S() { return S; }, load, save, addMatch, afterMatch, importMatches, syncFromSource, startSession, endSession, buildReview, openSheet, saveSheet, get F() { return F; }, go, dayKey, themeStat };
+window.__soloq = { get S() { return S; }, load, save, addMatch, afterMatch, undoLast, typicalRR, rrChips, startSession, endSession, buildReview, openSheet, saveSheet, get F() { return F; }, go, dayKey, themeStat };
 
 (async function init() {
   load(); applyLook();

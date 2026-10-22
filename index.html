@@ -143,12 +143,18 @@ input[type=text], input[type=number], select, input:not([type]) { border: 1px so
 .sheet h3 { margin: 0 0 4px; font-size: 17px; }
 .sheet .lbl { font-size: 13px; color: var(--muted); margin: 14px 0 6px; font-weight: 700; }
 .res3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.res { border: 2px solid var(--line); background: var(--card); border-radius: 14px; min-height: 58px; font-size: 17px; font-weight: 800; }
+.res { border: 2px solid var(--line); background: var(--card); border-radius: 16px; min-height: 72px; font-size: 20px; font-weight: 800; }
+.rrrow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.rrrow .chip { min-height: 48px; font-size: 16px; font-weight: 800; padding: 6px 0; border-radius: 12px; }
+.grid3 .chip { min-height: 44px; border-radius: 12px; }
+.toast { display: flex; align-items: center; gap: 12px; }
+.toast[hidden] { display: none; }
+.toastbtn { border: 0; background: var(--accent); color: var(--accent-ink); border-radius: 999px; padding: 6px 14px; font-weight: 800; min-height: 36px; }
 .res.win.on { background: var(--win-soft); border-color: var(--win); color: var(--win); }
 .res.loss.on { background: var(--loss-soft); border-color: var(--loss); color: var(--loss); }
 .res.draw.on { background: var(--draw-soft); border-color: var(--draw); }
 .marks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.mark { border: 2px solid var(--line); background: var(--card); border-radius: 14px; min-height: 50px; font-size: 15px; font-weight: 700; }
+.mark { border: 2px solid var(--line); background: var(--card); border-radius: 14px; min-height: 60px; font-size: 15px; font-weight: 700; }
 .mark b { font-size: 20px; margin-right: 4px; }
 .mark.on.o { border-color: var(--win); background: var(--win-soft); }
 .mark.on.m { border-color: var(--mid); background: var(--mid-soft); }
@@ -225,7 +231,6 @@ a { color: var(--accent); }
 <div id="sheetHost"></div>
 <audio id="sfx" preload="none"></audio>
 <audio id="radioAudio" preload="none"></audio>
-<script src="fetcher.js"></script>
 <script src="app.js"></script>
 <!-- pwa -->
 <script>if ('serviceWorker' in navigator && location.protocol !== 'file:') addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));</script>

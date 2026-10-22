@@ -1,7 +1,7 @@
 // 幸とソロQ：ホーム画面から開いたとき、電波がなくても前に開いた画面を出すためのサービスワーカー
 // ページはネット優先（更新をすぐ反映）、同じサイトのファイルはキャッシュを使いつつ裏で更新
-const VERSION = 'soloq-v1';
-const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png', 'app.js', 'fetcher.js', 'voice/lines.json', 'audio/index.json'];
+const VERSION = 'soloq-v2';
+const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png', 'app.js', 'voice/lines.json', 'audio/index.json'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
 });
