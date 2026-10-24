@@ -634,7 +634,10 @@ function renderBgm() {
 // 声・ラジオのあいだは BGM と同じく小さく（iPhone は音量を変えられないので一時停止→再開）。BGM とは同時に鳴らさない
 const YT_LIST = 'PLiuDBxlAJggQwhhm0oByBAnsRQN71JoVu', YT_FIRST = '_gRd21nJxfo';
 const YT_URL = `https://www.youtube.com/watch?v=${YT_FIRST}&list=${YT_LIST}`;
-let ytP = null, ytApiP = null, ytOn = false, ytPlaying = false, ytAutoPaused = false, ytTitle = '';
+// リストのまま埋めこむと YouTube 側で断られることがある（エラー150。中の動画はひとつずつなら流せる）。
+// そのときは中の動画を並べて流す。リストに曲を足したら、ここにも足す（2026-10-24 時点の4本）
+const YT_IDS = ['_gRd21nJxfo', '_PBjIZS6SeQ', 'UpxX6moYv5Y', 'ru-O5L2uxho'];
+let ytP = null, ytApiP = null, ytOn = false, ytPlaying = false, ytAutoPaused = false, ytTitle = '', ytErrs = 0, ytErrMsg = '', ytByIds = false;
 function ytApi() {
   if (ytApiP) return ytApiP;
   ytApiP = new Promise((res, rej) => {
@@ -656,6 +659,7 @@ function ytDuck() {
 }
 function ytShow(on) { $('#ytDock').hidden = !on; document.body.classList.toggle('yt-open', on); }
 async function playYt() {
+  ytErrs = 0; ytErrMsg = '';
   ytOn = true; ytAutoPaused = false; ytShow(true); renderYt();
   if (!bgmEl.paused) pauseBgm();
   if (ytP) { ytVol(); ytP.playVideo(); return; }
@@ -667,11 +671,19 @@ async function playYt() {
       onReady: e => { ytVol(); if (ytOn) e.target.playVideo(); },
       onStateChange: e => {
         ytPlaying = e.data === YT.PlayerState.PLAYING;
-        if (ytPlaying) { if (!bgmEl.paused) pauseBgm(); ytAutoPaused = false; }
+        if (ytPlaying) { if (!bgmEl.paused) pauseBgm(); ytAutoPaused = false; ytErrs = 0; ytErrMsg = ''; }
         const d = ytP.getVideoData && ytP.getVideoData(); ytTitle = (d && d.title) || ytTitle;
         renderYt();
       },
-      onError: () => { if (ytP) ytP.nextVideo(); },
+      // 流せない動画が出たら案内を出して次へ（流れはじめたら案内は消える）。続けて3本だめなら止める
+      // リストが非公開だと、アプリの中のプレーヤーからは見えない（白さんのログインは使えない）
+      onError: () => {
+        if (!ytByIds) { ytByIds = true; ytP.loadPlaylist(YT_IDS); ytVol(); return; }
+        ytErrs++;
+        ytErrMsg = 'アプリの中では流せない動画がありました（リストが非公開か、埋めこみできない動画）。YouTube で開くと流せます';
+        if (ytErrs >= 3) { ytP.stopVideo(); ytPlaying = false; } else ytP.nextVideo();
+        renderYt();
+      },
     },
   });
 }
@@ -688,13 +700,14 @@ function ytBoxHTML() {
       <div class="tiny muted">白さんの再生リスト</div>
       <div class="ttl">${esc(ytOn && ytTitle ? ytTitle : 'チルのプレイリスト')}</div>
       <div class="row" style="margin-top:8px"><button class="btn primary grow" data-act="yt">${ytPlaying ? '❚❚ 止める' : '▶ YouTube のリストを流す'}</button><button class="btn" data-act="ytnext" aria-label="次の動画">次 ⏭</button></div>
+      ${ytErrMsg ? `<div class="banner" style="margin-top:10px">${esc(ytErrMsg)}<div style="margin-top:8px"><a class="btn sm primary" href="${YT_URL}" target="_blank" rel="noopener">YouTube で開く ↗</a></div></div>` : ''}
       <p class="tiny muted" style="margin:8px 0 0">画面の下に小さなプレーヤーが出ます。音量は BGM の音量と同じ。幸の声・ラジオのあいだは${VOL_OK ? '小さく' : 'いったん止めて'}、終わったら戻します。iPhone で鳴らないときは、プレーヤーの ▶ をもう一度押すか <a href="${YT_URL}" target="_blank" rel="noopener">YouTube で開く</a>。</p>
     </div>`;
 }
 function renderYt() {
   renderBgmMini();
   const b = $('#ytBox'); if (b) b.innerHTML = ytBoxHTML();
-  const h = $('#ytHead'); if (h) h.innerHTML = `<span class="grow t tiny">${esc(ytTitle || 'YouTube のリスト')}</span><button class="iconbtn" data-act="yt" aria-label="${ytPlaying ? '止める' : '流す'}">${ytPlaying ? '❚❚' : '▶'}</button><button class="iconbtn" data-act="ytnext" aria-label="次の動画">⏭</button><button class="iconbtn" data-act="ytclose" aria-label="YouTubeを閉じる">✕</button>`;
+  const h = $('#ytHead'); if (h) h.innerHTML = `<span class="grow t tiny">${ytErrMsg ? `<a href="${YT_URL}" target="_blank" rel="noopener">流せません → YouTube で開く ↗</a>` : esc(ytTitle || 'YouTube のリスト')}</span><button class="iconbtn" data-act="yt" aria-label="${ytPlaying ? '止める' : '流す'}">${ytPlaying ? '❚❚' : '▶'}</button><button class="iconbtn" data-act="ytnext" aria-label="次の動画">⏭</button><button class="iconbtn" data-act="ytclose" aria-label="YouTubeを閉じる">✕</button>`;
 }
 // ロック画面のボタンは、いま鳴っているほう（あとから流したほう）を動かす
 let mediaOwner = 'radio';
