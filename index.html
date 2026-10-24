@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-title" content="ソロQ">
 <meta name="theme-color" content="#0d1016">
 <!-- /pwa -->
-<meta name="description" content="ソロキューのおとも。戦績を10秒で記録、1試合1テーマ、今日のセッション、2人の幸のラジオ、オリジナルのチルBGM。">
+<meta name="description" content="ソロキューのおとも。戦績を10秒で記録、ひとことメモ、1試合1テーマ、今日のセッション、2人の幸のラジオ、オリジナルのチルBGM。">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -160,6 +160,8 @@ input[type=text], input[type=number], select, input:not([type]) { border: 1px so
 .mark.on.m { border-color: var(--mid); background: var(--mid-soft); }
 .mark.on.x { border-color: var(--loss); background: var(--loss-soft); }
 details summary { cursor: pointer; color: var(--muted); font-size: 14px; margin-top: 14px; }
+.memo-in { width: 100%; }
+.mlist .memo { color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .kda { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
 .kda label { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 2px; }
 .kda input { width: 100%; text-align: center; }

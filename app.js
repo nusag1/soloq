@@ -330,7 +330,7 @@ function matchList(list, empty) {
   return `<div class="mlist">${list.map(m => `<button class="m" data-edit="${m.id}">
     <span class="badge ${m.result}">${RES1[m.result]}</span>
     <span class="grow"><div class="t">${esc(m.agent || 'エージェント未選択')}${m.map ? '・' + esc(m.map) : ''}</div>
-    <div class="tiny muted t">${dayLabel(dayKey(m.ts))} ${hm(m.ts)}${m.k != null ? `・${m.k}/${m.d ?? '-'}/${m.a ?? '-'}` : ''}${m.theme ? `・${esc(m.theme)} ${m.mark ? MARK[m.mark] : '−'}` : ''}</div></span>
+    <div class="tiny muted t">${dayLabel(dayKey(m.ts))} ${hm(m.ts)}${m.k != null ? `・${m.k}/${m.d ?? '-'}/${m.a ?? '-'}` : ''}${m.theme ? `・${esc(m.theme)} ${m.mark ? MARK[m.mark] : '−'}` : ''}</div>${m.memo ? `<div class="small t memo">📝 ${esc(m.memo)}</div>` : ''}</span>
     <span class="rr ${cls(m.rr)}">${sgn(m.rr || 0)}</span></button>`).join('')}</div>`;
 }
 
@@ -357,7 +357,7 @@ function lastOf(key) { const m = S.matches.slice().sort(byTs).reverse().find(x =
 function openSheet(editId) {
   const m = editId ? S.matches.find(x => x.id === editId) : null;
   showAllAgents = false;
-  F = m ? { ...m, editId } : { result: null, rr: null, rrTouched: false, agent: lastOf('agent'), map: lastOf('map'), theme: S.theme, mark: null, k: null, d: null, a: null };
+  F = m ? { ...m, editId } : { result: null, rr: null, rrTouched: false, agent: lastOf('agent'), map: lastOf('map'), theme: S.theme, mark: null, k: null, d: null, a: null, memo: '' };
   renderSheet();
 }
 function saveLabel() { return F.result ? (F.editId ? '直す' : `記録する（${RES[F.result]} ${sgn(F.rr ?? 0)}）`) : '勝ち・負け・引き分けを選んでね'; }
@@ -387,6 +387,8 @@ function renderSheet() {
     <div class="grid3">${shown.map(a => `<button class="chip ${F.agent === a ? 'on' : ''}" data-agent="${esc(a)}">${esc(a)}</button>`).join('')}${showAllAgents ? `<button class="chip add" data-act="newAgent">＋入力</button>` : `<button class="chip add" data-act="moreAgents">ほか…</button>`}</div>
     <div class="lbl">マップ <span class="muted" style="font-weight:500">前回のまま</span></div>
     <div class="grid3">${maps.map(p => `<button class="chip ${F.map === p ? 'on' : ''}" data-map="${esc(p)}">${esc(p)}</button>`).join('')}</div>
+    <div class="lbl">ひとことメモ <span class="muted" style="font-weight:500">なくてもOK</span></div>
+    <input id="memoIn" class="memo-in" type="text" maxlength="80" enterkeyhint="done" value="${esc(F.memo || '')}" placeholder="例：B ロングで撃ち負けた" aria-label="ひとことメモ">
     <details ${F.k != null ? 'open' : ''}><summary>キル / デス / アシスト（なくてもOK）</summary>
       <div class="kda"><label>キル<input id="kIn" type="number" inputmode="numeric" min="0" value="${F.k ?? ''}"></label><label>デス<input id="dIn" type="number" inputmode="numeric" min="0" value="${F.d ?? ''}"></label><label>アシスト<input id="aIn" type="number" inputmode="numeric" min="0" value="${F.a ?? ''}"></label></div></details>
     ${F.editId ? `<button class="btn ghost block" style="margin-top:12px;color:var(--loss)" data-act="delMatch">この試合を消す</button>` : ''}
@@ -394,6 +396,8 @@ function renderSheet() {
   </div></div>`;
   if (keep) host.querySelector('.sheet').scrollTop = top;
   const rr = $('#rrIn'); rr.addEventListener('input', () => { F.rr = rr.value === '' ? null : Math.round(+rr.value); F.rrTouched = true; $('[data-act=saveMatch]').textContent = saveLabel(); });
+  const mi = $('#memoIn'); mi.addEventListener('input', () => { F.memo = mi.value; });
+  mi.addEventListener('keydown', e => { if (e.key === 'Enter') mi.blur(); });
   for (const id of ['k', 'd', 'a']) $(`#${id}In`).addEventListener('input', e => { F[id] = e.target.value === '' ? null : Math.max(0, Math.round(+e.target.value)); });
 }
 function saveSheet() {
@@ -401,13 +405,13 @@ function saveSheet() {
   const rr = F.rr ?? 0;
   if (F.editId) {
     const m = S.matches.find(x => x.id === F.editId);
-    Object.assign(m, { result: F.result, rr, agent: F.agent, map: F.map, theme: F.theme, mark: F.theme ? F.mark : null, k: F.k, d: F.d, a: F.a });
+    Object.assign(m, { result: F.result, rr, agent: F.agent, map: F.map, theme: F.theme, mark: F.theme ? F.mark : null, k: F.k, d: F.d, a: F.a, memo: (F.memo || '').trim() || null });
     save(); F = null; renderSheet(); renderAll(); toast('直しました');
     return;
   }
   const s = active();
   const m = { id: uid(), ts: Date.now(), result: F.result, rr, agent: F.agent, map: F.map, theme: F.theme || null, mark: F.theme ? F.mark : null,
-    k: F.k, d: F.d, a: F.a, session: s ? s.id : null };
+    k: F.k, d: F.d, a: F.a, memo: (F.memo || '').trim() || null, session: s ? s.id : null };
   S.undo = { id: m.id, react: S.lastReact, rot: { ...S.rot }, lastRR: { ...S.lastRR } };
   F = null; renderSheet();
   addMatch(m);
