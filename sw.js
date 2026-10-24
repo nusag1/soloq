@@ -1,7 +1,7 @@
 // 幸とソロQ：ホーム画面から開いたとき、電波がなくても前に開いた画面を出すためのサービスワーカー
-// ページはネット優先（更新をすぐ反映）、同じサイトのファイルはキャッシュを使いつつ裏で更新
+// ページも同じサイトのファイルもネット優先（更新をすぐ反映）。電波がないときはキャッシュ
 // BGM（bgm/*.mp3、全部で約9MB）は最初から入れない。一度流した曲だけ、裏で丸ごと取ってきて別のキャッシュにしまう
-const VERSION = 'soloq-v6';
+const VERSION = 'soloq-v7';
 const BGM_CACHE = 'soloq-bgm-1'; // 曲を作り直したら数字を上げる
 const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png', 'app.js', 'voice/lines.json', 'audio/index.json', 'bgm/index.json'];
 self.addEventListener('install', e => {
@@ -43,8 +43,7 @@ self.addEventListener('fetch', e => {
   if (url.origin !== location.origin) return;
   if (/\/bgm\/[^/]+\.mp3$/.test(url.pathname)) { e.respondWith(bgmResponse(e, url.origin + url.pathname)); return; }
   if (req.headers.has('range')) return;
-  e.respondWith(caches.match(req).then(hit => {
-    const net = fetch(req).then(r => { if (r.ok) { const cp = r.clone(); caches.open(VERSION).then(c => c.put(req, cp)); } return r; }).catch(() => hit);
-    return hit || net;
-  }));
+  // ネット優先（直したらすぐ反映）。電波がないときだけしまってあるものを使う
+  e.respondWith(fetch(req).then(r => { if (r.ok) { const cp = r.clone(); caches.open(VERSION).then(c => c.put(req, cp)); } return r; })
+    .catch(() => caches.match(req)));
 });

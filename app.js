@@ -634,10 +634,10 @@ function renderBgm() {
 // 声・ラジオのあいだは BGM と同じく小さく（iPhone は音量を変えられないので一時停止→再開）。BGM とは同時に鳴らさない
 const YT_LIST = 'PLiuDBxlAJggQwhhm0oByBAnsRQN71JoVu', YT_FIRST = '_gRd21nJxfo';
 const YT_URL = `https://www.youtube.com/watch?v=${YT_FIRST}&list=${YT_LIST}`;
-// リストのまま埋めこむと YouTube 側で断られることがある（エラー150。中の動画はひとつずつなら流せる）。
-// そのときは中の動画を並べて流す。リストに曲を足したら、ここにも足す（2026-10-24 時点の4本）
+// リストのまま埋めこむと YouTube 側で断られる（エラー150。中の動画はひとつずつなら流せる）ので、
+// はじめから中の動画を並べて流す。リストに曲を足したら、ここにも足す（2026-10-24 時点の4本）
 const YT_IDS = ['_gRd21nJxfo', '_PBjIZS6SeQ', 'UpxX6moYv5Y', 'ru-O5L2uxho'];
-let ytP = null, ytApiP = null, ytOn = false, ytPlaying = false, ytAutoPaused = false, ytTitle = '', ytErrs = 0, ytErrMsg = '', ytByIds = false;
+let ytP = null, ytApiP = null, ytOn = false, ytPlaying = false, ytAutoPaused = false, ytTitle = '', ytErrs = 0, ytErrMsg = '';
 function ytApi() {
   if (ytApiP) return ytApiP;
   ytApiP = new Promise((res, rej) => {
@@ -666,7 +666,8 @@ async function playYt() {
   try { await ytApi(); } catch (e) { ytOn = false; ytShow(false); renderYt(); toast('YouTube を読みこめませんでした。「YouTube で開く」からどうぞ'); return; }
   ytP = new YT.Player('ytPlayer', {
     width: '100%', height: '100%', host: 'https://www.youtube-nocookie.com',
-    playerVars: { listType: 'playlist', list: YT_LIST, autoplay: 1, playsinline: 1, rel: 0 },
+    videoId: YT_IDS[0],
+    playerVars: { playlist: YT_IDS.slice(1).join(','), loop: 1, autoplay: 1, playsinline: 1, rel: 0 },
     events: {
       onReady: e => { ytVol(); if (ytOn) e.target.playVideo(); },
       onStateChange: e => {
@@ -678,7 +679,6 @@ async function playYt() {
       // 流せない動画が出たら案内を出して次へ（流れはじめたら案内は消える）。続けて3本だめなら止める
       // リストが非公開だと、アプリの中のプレーヤーからは見えない（白さんのログインは使えない）
       onError: () => {
-        if (!ytByIds) { ytByIds = true; ytP.loadPlaylist(YT_IDS); ytVol(); return; }
         ytErrs++;
         ytErrMsg = 'アプリの中では流せない動画がありました（リストが非公開か、埋めこみできない動画）。YouTube で開くと流せます';
         if (ytErrs >= 3) { ytP.stopVideo(); ytPlaying = false; } else ytP.nextVideo();
