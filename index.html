@@ -199,6 +199,13 @@ details summary { cursor: pointer; color: var(--muted); font-size: 14px; margin-
 .bgm-mini { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding: 8px 10px 8px 12px; }
 .bgm-mini .t { line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bgm-ic { font-size: 18px; flex: none; }
+.yt-dock { position: fixed; right: 16px; bottom: calc(66px + env(safe-area-inset-bottom)); z-index: 9; width: min(360px, calc(100% - 32px));
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
+.yt-dock[hidden] { display: none; }
+.yt-head { display: flex; align-items: center; gap: 4px; padding: 4px 6px 4px 10px; }
+.yt-head .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.yt-frame { height: 200px; background: #000; }
+body.yt-open .wrap { padding-bottom: 260px; }
 .tag { font-size: 11px; border-radius: 6px; padding: 1px 6px; background: var(--bg-2); color: var(--muted); white-space: nowrap; }
 
 /* 下のタブ */
@@ -223,7 +230,7 @@ a { color: var(--accent); }
   <section class="view" id="v-stats"></section>
   <section class="view" id="v-radio"></section>
   <section class="view" id="v-settings"></section>
-  <p class="credit">音声：VOICEVOX:春日部つむぎ、VOICEVOX:冥鳴ひまり<br>BGM：幸とソロQ オリジナル（開発部）<br>Riot Games とは関係のない、個人のファンメイドのツールです</p>
+  <p class="credit">音声：VOICEVOX:春日部つむぎ、VOICEVOX:冥鳴ひまり<br>BGM：幸とソロQ オリジナル（開発部）・YouTube の再生リストは YouTube の埋めこみプレーヤーで再生<br>Riot Games とは関係のない、個人のファンメイドのツールです</p>
 </div>
 <nav class="tabs" aria-label="画面の切りかえ"><div class="in">
   <button data-tab="today" class="on"><span class="i" aria-hidden="true">🎮</span>今日</button>
@@ -231,6 +238,7 @@ a { color: var(--accent); }
   <button data-tab="radio"><span class="i" aria-hidden="true">📻</span>ラジオ</button>
   <button data-tab="settings"><span class="i" aria-hidden="true">⚙️</span>設定</button>
 </div></nav>
+<div class="yt-dock" id="ytDock" hidden><div class="yt-head" id="ytHead"></div><div class="yt-frame"><div id="ytPlayer"></div></div></div>
 <div id="sheetHost"></div>
 <audio id="sfx" preload="none"></audio>
 <audio id="radioAudio" preload="none"></audio>

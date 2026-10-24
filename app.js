@@ -8,7 +8,7 @@ const THEMES = ['プリエイム', 'クロスヘアの高さ', '撃ち合い後�
 const AGENTS = ['アストラ', 'アイソ', 'ヴァイス', 'ヴァイパー', 'ヴィトー', 'ウェイレイ', 'オーメン', 'キルジョイ', 'クローヴ', 'ケイオー',
   'ゲッコー', 'サイファー', 'ジェット', 'スカイ', 'セージ', 'ソーヴァ', 'チェンバー', 'テホ', 'デッドロック', 'ネオン',
   'ハーバー', 'フェイド', 'フェニックス', 'ブリーチ', 'ブリムストーン', 'ヨル', 'レイズ', 'レイナ'];
-const MAPS = ['アセント', 'アビス', 'アイスボックス', 'カロード', 'サンセット', 'スプリット', 'パール', 'バインド', 'フラクチャー',
+const MAPS = ['アセント', 'アビス', 'アイスボックス', 'カロード', 'サミット', 'サンセット', 'スプリット', 'パール', 'バインド', 'フラクチャー',
   'ブリーズ', 'ヘイヴン', 'ロータス'];
 const RES = { win: '勝ち', loss: '負け', draw: '引き分け' };
 const RES1 = { win: '勝', loss: '負', draw: '分' };
@@ -492,12 +492,15 @@ function renderRadio() {
       <div class="row" style="margin-top:8px"><button class="btn primary grow" data-act="rplay">${radioEl.paused ? '▶ 再生' : '❚❚ 止める'}</button><button class="btn" data-act="rnext" aria-label="次の回">次 ⏭</button></div>
       <label class="row small" style="margin-top:10px"><input type="checkbox" id="rauto" ${S.settings.radioAuto ? 'checked' : ''}> 終わったら次の回へ</label>
     </div>
+    <h2>YouTube のリスト<span class="sub">ボタン1つで</span></h2>
+    <div id="ytBox"></div>
     <h2>BGM<span class="sub">オリジナルのチル ${BGM.length}曲</span></h2>
     <div id="bgmBox"></div>
     <h2>番組の一覧<span class="sub">${eps.length}本</span></h2>
     <div class="card">${eps.map((e, i) => `<button class="ep ${i === radioIdx ? 'on' : ''}" data-ep="${i}"><span class="n">${i + 1}</span><span class="grow"><div class="t">${esc(e.title)}</div></span><span class="tag">${esc(e.when)}</span><span class="tiny muted num">${fmtSec((DUR[e.id] || {}).sec)}</span></button>`).join('')}</div>`;
   $('#rauto').addEventListener('change', e => { S.settings.radioAuto = e.target.checked; save(); });
   renderBgm();
+  renderYt();
   updateRadioProg();
 }
 function playRadio(i) {
@@ -541,6 +544,7 @@ function duck(reason, on) {
   if (on) { clearTimeout(unduckT); ducks.add(reason); }
   else ducks.delete(reason);
   renderBgmMini();
+  ytDuck();
   if (VOL_OK) { if (on) rampBgm(250); else { clearTimeout(unduckT); unduckT = setTimeout(() => rampBgm(700), 400); } return; }
   if (on && !bgmEl.paused) { bgmAutoPaused = true; bgmEl.pause(); }
   if (!on && !ducks.size && bgmAutoPaused) {
@@ -563,6 +567,7 @@ function playBgm(id) {
   const t = loadBgm(id || S.settings.bgmTrack); if (!t) return;
   bgmAutoPaused = false;
   if (!VOL_OK && !radioEl.paused) radioEl.pause(); // 音量を下げられない端末では、あとから選んだほうを優先
+  ytPause(); // BGM と YouTube は同時に鳴らさない
   if (VOL_OK) { clearInterval(bgmRamp); bgmEl.volume = bgmTarget(); }
   const p = bgmEl.play(); if (p) p.catch(() => {});
   renderBgm();
@@ -578,7 +583,7 @@ function nextBgm(dir = 1) {
   playBgm(BGM[j].id);
 }
 function setBgmMode(m) { S.settings.bgmMode = m; bgmEl.loop = m === 'one'; save(); renderBgm(); }
-function setBgmVol(v) { S.settings.bgmVol = v; save(); if (VOL_OK) { clearInterval(bgmRamp); bgmEl.volume = bgmTarget(); } }
+function setBgmVol(v) { S.settings.bgmVol = v; save(); if (VOL_OK) { clearInterval(bgmRamp); bgmEl.volume = bgmTarget(); } ytVol(); }
 bgmEl.addEventListener('ended', () => { if (!bgmEl.loop) nextBgm(1); });
 bgmEl.addEventListener('play', () => { setMedia('bgm'); renderBgm(); });
 bgmEl.addEventListener('pause', () => { if (!radioEl.paused) setMedia('radio'); renderBgm(); });
@@ -611,13 +616,81 @@ function bgmBoxHTML() {
     <div class="card" style="margin-top:10px">${BGM.map(x => `<button class="ep ${x.id === t.id ? 'on' : ''}" data-bt="${x.id}"><span class="n" aria-hidden="true">${x.id === t.id && on ? '♪' : '🎵'}</span><span class="grow"><div class="t">${esc(x.title)}</div></span><span class="tag">${esc(x.mood)}</span><span class="tiny muted num">${fmtSec(x.sec)}</span></button>`).join('')}
       <p class="tiny muted" style="margin:8px 0 0">BGM：幸とソロQ オリジナル（開発部）</p></div>`;
 }
-function renderBgmMini() { const m = $('#bgmMini'); if (m) m.innerHTML = bgmMiniHTML(); }
+function renderBgmMini() { const m = $('#bgmMini'); if (m) m.innerHTML = bgmMiniHTML() + ytMiniHTML(); }
 function renderBgm() {
   renderBgmMini();
   const b = $('#bgmBox'); if (b) {
     b.innerHTML = bgmBoxHTML();
     const v = $('#bvol'); if (v) v.addEventListener('input', e => setBgmVol(+e.target.value));
   }
+}
+// ===== YouTube のリスト（白さんの再生リストを、ボタン1つで） =====
+// YouTube の埋めこみプレーヤー（IFrame API）で流す。曲はこちらで持たない・保存しない（再配布にならないように）。
+// プレーヤーは画面の下に小さく出しておく（YouTube の決まりで、再生中は見えている必要がある）。
+// 声・ラジオのあいだは BGM と同じく小さく（iPhone は音量を変えられないので一時停止→再開）。BGM とは同時に鳴らさない
+const YT_LIST = 'PLiuDBxlAJggQwhhm0oByBAnsRQN71JoVu', YT_FIRST = '_gRd21nJxfo';
+const YT_URL = `https://www.youtube.com/watch?v=${YT_FIRST}&list=${YT_LIST}`;
+let ytP = null, ytApiP = null, ytOn = false, ytPlaying = false, ytAutoPaused = false, ytTitle = '';
+function ytApi() {
+  if (ytApiP) return ytApiP;
+  ytApiP = new Promise((res, rej) => {
+    if (window.YT && YT.Player) return res();
+    window.onYouTubeIframeAPIReady = res;
+    const s = document.createElement('script'); s.src = 'https://www.youtube.com/iframe_api';
+    s.onerror = () => { ytApiP = null; rej(new Error('yt')); };
+    document.head.appendChild(s);
+  });
+  return ytApiP;
+}
+function ytBase() { return Math.round(S.settings.bgmVol * 100); }
+function ytVol() { if (ytP && ytP.setVolume && VOL_OK) ytP.setVolume(ducks.size ? Math.round(ytBase() * DUCK) : ytBase()); }
+function ytDuck() {
+  if (!ytP || !ytOn) return;
+  if (VOL_OK) return ytVol();
+  if (ducks.size && ytPlaying) { ytAutoPaused = true; ytP.pauseVideo(); }
+  if (!ducks.size && ytAutoPaused) { ytAutoPaused = false; setTimeout(() => { if (!ducks.size && ytP) ytP.playVideo(); }, 600); }
+}
+function ytShow(on) { $('#ytDock').hidden = !on; document.body.classList.toggle('yt-open', on); }
+async function playYt() {
+  ytOn = true; ytAutoPaused = false; ytShow(true); renderYt();
+  if (!bgmEl.paused) pauseBgm();
+  if (ytP) { ytVol(); ytP.playVideo(); return; }
+  try { await ytApi(); } catch (e) { ytOn = false; ytShow(false); renderYt(); toast('YouTube を読みこめませんでした。「YouTube で開く」からどうぞ'); return; }
+  ytP = new YT.Player('ytPlayer', {
+    width: '100%', height: '100%', host: 'https://www.youtube-nocookie.com',
+    playerVars: { listType: 'playlist', list: YT_LIST, autoplay: 1, playsinline: 1, rel: 0 },
+    events: {
+      onReady: e => { ytVol(); if (ytOn) e.target.playVideo(); },
+      onStateChange: e => {
+        ytPlaying = e.data === YT.PlayerState.PLAYING;
+        if (ytPlaying) { if (!bgmEl.paused) pauseBgm(); ytAutoPaused = false; }
+        const d = ytP.getVideoData && ytP.getVideoData(); ytTitle = (d && d.title) || ytTitle;
+        renderYt();
+      },
+      onError: () => { if (ytP) ytP.nextVideo(); },
+    },
+  });
+}
+function ytPause() { if (ytP && ytPlaying) { ytAutoPaused = false; ytP.pauseVideo(); } }
+function toggleYt() { if (ytOn && ytPlaying) ytPause(); else playYt(); }
+function ytNext() { if (ytP) ytP.nextVideo(); else playYt(); }
+function ytClose() { if (ytP) ytP.stopVideo(); ytOn = false; ytPlaying = false; ytAutoPaused = false; ytShow(false); renderYt(); }
+function ytMiniHTML() {
+  return `<div class="card bgm-mini"><span class="bgm-ic" aria-hidden="true">📺</span><span class="grow t"><span class="tiny muted">YouTube のリスト${ytPlaying ? (ducks.size && VOL_OK ? '・声のあいだ小さく' : '・再生中') : ''}</span><br><b>${esc(ytPlaying && ytTitle ? ytTitle : 'チルのプレイリスト')}</b></span>
+    <button class="iconbtn" data-act="yt" aria-label="${ytPlaying ? 'YouTubeを止める' : 'YouTubeのリストを流す'}">${ytPlaying ? '❚❚' : '▶'}</button>${ytOn ? '<button class="iconbtn" data-act="ytnext" aria-label="次の動画">⏭</button>' : ''}</div>`;
+}
+function ytBoxHTML() {
+  return `<div class="card player">
+      <div class="tiny muted">白さんの再生リスト</div>
+      <div class="ttl">${esc(ytOn && ytTitle ? ytTitle : 'チルのプレイリスト')}</div>
+      <div class="row" style="margin-top:8px"><button class="btn primary grow" data-act="yt">${ytPlaying ? '❚❚ 止める' : '▶ YouTube のリストを流す'}</button><button class="btn" data-act="ytnext" aria-label="次の動画">次 ⏭</button></div>
+      <p class="tiny muted" style="margin:8px 0 0">画面の下に小さなプレーヤーが出ます。音量は BGM の音量と同じ。幸の声・ラジオのあいだは${VOL_OK ? '小さく' : 'いったん止めて'}、終わったら戻します。iPhone で鳴らないときは、プレーヤーの ▶ をもう一度押すか <a href="${YT_URL}" target="_blank" rel="noopener">YouTube で開く</a>。</p>
+    </div>`;
+}
+function renderYt() {
+  renderBgmMini();
+  const b = $('#ytBox'); if (b) b.innerHTML = ytBoxHTML();
+  const h = $('#ytHead'); if (h) h.innerHTML = `<span class="grow t tiny">${esc(ytTitle || 'YouTube のリスト')}</span><button class="iconbtn" data-act="yt" aria-label="${ytPlaying ? '止める' : '流す'}">${ytPlaying ? '❚❚' : '▶'}</button><button class="iconbtn" data-act="ytnext" aria-label="次の動画">⏭</button><button class="iconbtn" data-act="ytclose" aria-label="YouTubeを閉じる">✕</button>`;
 }
 // ロック画面のボタンは、いま鳴っているほう（あとから流したほう）を動かす
 let mediaOwner = 'radio';
@@ -751,6 +824,9 @@ document.addEventListener('click', e => {
   if (a === 'rnext') return playRadio(radioIdx + 1);
   if (a === 'bplay') return toggleBgm();
   if (a === 'bnext') return nextBgm(1);
+  if (a === 'yt') return toggleYt();
+  if (a === 'ytnext') return ytNext();
+  if (a === 'ytclose') return ytClose();
   if (a === 'testVoice') { const c = (LINES.reactions.win || [])[0]; if (c) { radioEl.pause(); playClip(c); } return; }
   if (a === 'export') return exportData();
   if (a === 'import') return $('#impFile').click();
