@@ -664,23 +664,34 @@ async function playYt() {
   if (!bgmEl.paused) pauseBgm();
   if (ytP) { ytVol(); ytP.playVideo(); return; }
   try { await ytApi(); } catch (e) { ytOn = false; ytShow(false); renderYt(); toast('YouTube を読みこめませんでした。「YouTube で開く」からどうぞ'); return; }
+  makeYtPlayer();
+}
+// iPhone の Safari では youtube-nocookie.com の埋めこみが「再生できません」になることがあるので、www.youtube.com を先に試す。
+// 1曲も流れないうちにエラーになったら、もう一方のホストで作り直す
+const YT_HOSTS = ['https://www.youtube.com', 'https://www.youtube-nocookie.com'];
+let ytHost = 0, ytEverPlayed = false;
+function makeYtPlayer() {
+  ytEverPlayed = false;
   ytP = new YT.Player('ytPlayer', {
-    width: '100%', height: '100%', host: 'https://www.youtube-nocookie.com',
+    width: '100%', height: '100%', host: YT_HOSTS[ytHost],
     videoId: YT_IDS[0],
-    playerVars: { playlist: YT_IDS.slice(1).join(','), loop: 1, autoplay: 1, playsinline: 1, rel: 0 },
+    playerVars: { playlist: YT_IDS.slice(1).join(','), loop: 1, autoplay: 1, playsinline: 1, rel: 0, origin: location.origin },
     events: {
       onReady: e => { ytVol(); if (ytOn) e.target.playVideo(); },
       onStateChange: e => {
         ytPlaying = e.data === YT.PlayerState.PLAYING;
-        if (ytPlaying) { if (!bgmEl.paused) pauseBgm(); ytAutoPaused = false; ytErrs = 0; ytErrMsg = ''; }
+        if (ytPlaying) { if (!bgmEl.paused) pauseBgm(); ytAutoPaused = false; ytErrs = 0; ytErrMsg = ''; ytEverPlayed = true; }
         const d = ytP.getVideoData && ytP.getVideoData(); ytTitle = (d && d.title) || ytTitle;
         renderYt();
       },
       // 流せない動画が出たら案内を出して次へ（流れはじめたら案内は消える）。続けて3本だめなら止める
-      // リストが非公開だと、アプリの中のプレーヤーからは見えない（白さんのログインは使えない）
-      onError: () => {
+      onError: e => {
+        if (!ytEverPlayed && ytHost < YT_HOSTS.length - 1) {
+          ytHost++; ytP.destroy(); ytP = null;
+          $('.yt-frame').innerHTML = '<div id="ytPlayer"></div>'; makeYtPlayer(); return;
+        }
         ytErrs++;
-        ytErrMsg = 'アプリの中では流せない動画がありました（リストが非公開か、埋めこみできない動画）。YouTube で開くと流せます';
+        ytErrMsg = `アプリの中では流せませんでした（コード ${e.data}）。YouTube で開くと流せます`;
         if (ytErrs >= 3) { ytP.stopVideo(); ytPlaying = false; } else ytP.nextVideo();
         renderYt();
       },
