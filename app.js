@@ -107,14 +107,19 @@ function react(cat, notes = []) {
   playClip(clip);
   renderSachi();
 }
-function playClip(clip) {
+// rest：続けて流すクリップ（週のふり返りの「はじめ → 本文 → おわり」）。ふつうに呼ぶと続きは消える
+let sfxQueue = [], sfxGen = 0;
+function playClip(clip, rest = []) {
+  sfxQueue = []; const gen = ++sfxGen;
   if (!clip || !S.settings.voice) return;
   if (!radioEl.paused) return; // ラジオ中は声を重ねない
   try {
     sfx.src = `audio/${clip.id}.mp3`; sfx.volume = S.settings.volume; sfx.currentTime = 0;
-    const p = sfx.play(); if (p) p.catch(() => {});
-  } catch (e) { }
+    sfxQueue = rest.slice();
+    const p = sfx.play(); if (p) p.catch(() => { if (gen === sfxGen) { sfxQueue = []; duck('voice', false); } }); // 次のクリップに切りかえたときの古い失敗は無視
+  } catch (e) { sfxQueue = []; }
 }
+function playSeq(clips) { const c = clips.filter(Boolean); if (c.length) playClip(c[0], c.slice(1)); }
 function findClip(id) {
   if (!LINES || !id) return null;
   for (const cs of Object.values(LINES.reactions)) for (const c of cs) if (c.id === id) return c;
@@ -424,12 +429,13 @@ function undoLast() {
   const u = S.undo; if (!u) return;
   S.matches = S.matches.filter(m => m.id !== u.id);
   S.lastReact = u.react; S.rot = u.rot; S.lastRR = u.lastRR; S.undo = null;
-  sfx.pause(); save(); renderAll(); toast('取り消しました');
+  sfxQueue = []; sfx.pause(); save(); renderAll(); toast('取り消しました');
 }
 
 // ===== 画面：戦績 =====
 let period = '7';
 function renderStats() {
+  if (weekOpen) return renderWeek();
   const v = $('#v-stats');
   const now = Date.now();
   const days = { today: 1, '7': 7, '30': 30, all: 99999 }[period];
@@ -453,6 +459,7 @@ function renderStats() {
       ${tUrl ? `<a class="btn block primary" href="${tUrl}" target="_blank" rel="noopener noreferrer">tracker.gg でくわしく見る ↗</a><p class="tiny muted" style="margin:6px 0 0">${esc(name)}#${esc(tag)} のページを開きます（アプリからは何も送りません）</p>`
       : `<button class="btn block ghost" data-tab-go="settings">設定で Riot ID を入れると tracker.gg を開けます</button>`}
     </div>
+    <button class="card weekentry" data-act="week"><span class="bgm-ic" aria-hidden="true">📅</span><span class="grow"><b>週のふり返り</b><div class="tiny muted">この1週間の RR・マップ別・メモを、幸が読み上げます</div></span><span class="muted" aria-hidden="true">›</span></button>
     <div class="row" style="margin-top:16px"><div class="seg" role="tablist">${[['today', '今日'], ['7', '7日'], ['30', '30日'], ['all', '全部']].map(([k, t]) => `<button class="${period === k ? 'on' : ''}" data-period="${k}" role="tab" aria-selected="${period === k}">${t}</button>`).join('')}</div></div>
     <div class="stats" style="margin-top:10px">
       <div class="stat"><div class="k">試合</div><div class="v">${list.length}</div></div>
@@ -477,6 +484,132 @@ function renderStats() {
     let c = 0; pts = Object.keys(by).sort().map(k => { c += by[k]; return { x: dayLabel(k), y: c, tip: `${dayLabel(k)}：その日 ${sgn(by[k])}（計 ${sgn(c)}）` }; });
   }
   drawLine($('#dayChart'), pts);
+}
+
+// ===== 週のふり返り（戦績の画面から。ふつうは今日までの7日、◀ ▶ で1週間ずつ） =====
+let weekOpen = false, weekOff = 0;
+const pad2 = n => String(n).padStart(2, '0');
+function addDays(k, n) { const [y, m, d] = k.split('-').map(Number); const t = new Date(y, m - 1, d + n); return `${t.getFullYear()}-${pad2(t.getMonth() + 1)}-${pad2(t.getDate())}`; }
+const dow = k => { const [y, m, d] = k.split('-').map(Number); return '日月火水木金土'[new Date(y, m - 1, d).getDay()]; };
+const dayLabelW = k => `${dayLabel(k)}（${dow(k)}）`;
+function weekDays(off) { const end = addDays(dayKey(Date.now()), -7 * off); return Array.from({ length: 7 }, (_, i) => addDays(end, i - 6)); }
+function weekStats(off = 0) {
+  const days = weekDays(off), set = new Set(days);
+  const list = S.matches.filter(m => set.has(dayKey(m.ts))).sort(byTs);
+  const cnt = a => ({ n: a.length, w: a.filter(m => m.result === 'win').length, l: a.filter(m => m.result === 'loss').length, rr: sum(a, m => m.rr) });
+  const all = cnt(list);
+  const byDay = days.map(k => ({ k, ...cnt(list.filter(m => dayKey(m.ts) === k)) }));
+  const played = byDay.filter(x => x.n);
+  const best = played.slice().sort((a, b) => b.rr - a.rr || b.w - a.w || a.k.localeCompare(b.k))[0] || null;
+  const worst = played.slice().sort((a, b) => a.rr - b.rr || b.l - a.l || a.k.localeCompare(b.k))[0] || null;
+  // 勝率の高い順（同じなら試合の多い順）。試合数も一緒に見せる
+  const group = key => { const g = {}; for (const m of list) if (m[key]) { const x = g[m[key]] = g[m[key]] || { n: 0, w: 0, l: 0, rr: 0 }; x.n++; x.rr += m.rr || 0; if (m.result === 'win') x.w++; if (m.result === 'loss') x.l++; }
+    return Object.entries(g).map(([k, x]) => ({ k, ...x, wr: pct(x.w, x.n) })).sort((a, b) => b.wr - a.wr || b.n - a.n || a.k.localeCompare(b.k, 'ja')); };
+  const themes = {};
+  for (const m of list) if (m.theme && m.mark) { const t = themes[m.theme] = themes[m.theme] || { o: 0, m: 0, x: 0, n: 0 }; t[m.mark]++; t.n++; }
+  let maxW = 0, maxL = 0, cw = 0, cl = 0;
+  for (const m of list) { cw = m.result === 'win' ? cw + 1 : 0; cl = m.result === 'loss' ? cl + 1 : 0; maxW = Math.max(maxW, cw); maxL = Math.max(maxL, cl); }
+  return { off, days, from: days[0], to: days[6], list, n: all.n, w: all.w, l: all.l, d: all.n - all.w - all.l, net: all.rr, wr: all.n ? pct(all.w, all.n) : null,
+    byDay, best, worst: worst && best && worst.k !== best.k ? worst : null, maps: group('map'), agents: group('agent'),
+    themes: Object.entries(themes).map(([k, x]) => ({ k, ...x, rate: pct(x.o, x.n) })).sort((a, b) => b.n - a.n || b.rate - a.rate),
+    maxW, maxL, memos: list.filter(m => m.memo) };
+}
+// 声のパターン：大きくプラス／少しプラス／とんとん／少しマイナス／大きくマイナス／少なめ／なし
+function weekPattern(ws) {
+  if (!ws.n) return 'week_none';
+  if (ws.n < 3) return 'week_few';
+  if (ws.net >= 50) return 'week_big_plus';
+  if (ws.net > 5) return 'week_plus';
+  if (ws.net >= -5) return 'week_flat';
+  if (ws.net > -50) return 'week_minus';
+  return 'week_big_minus';
+}
+function weekClip(cat, seed) { const l = (LINES && LINES.reactions[cat]) || []; return l.length ? pick(l, seed + cat) : null; }
+function weekClips(ws) { return [weekClip('week_intro', ws.from), weekClip(weekPattern(ws), ws.from), weekClip('week_outro', ws.from)].filter(Boolean); }
+function buildWeekReview(ws, prev) {
+  const seed = ws.from;
+  if (!ws.n) return [prev && prev.n ? `この週は記録なし。その前の週は ${prev.n}試合がんばっていたので、ちょうどいいお休みになったかも。` : 'この週は記録なし。お休みも作戦のうちです。',
+    'またやりたくなったら、試合のあとに記録してくださいね。ちゃんと一緒にふり返ります。'];
+  const out = [];
+  const head = `${ws.n}試合で ${ws.w}勝${ws.l}敗${ws.d ? ws.d + '分' : ''}（勝率 ${ws.wr}%）、${sgn(ws.net)}RR。`;
+  const pat = weekPattern(ws);
+  if (pat === 'week_few') out.push(head + pick(['試合は少なめでしたが、ちゃんと記録できています。', 'ゆっくりペースの週でしたね。'], seed));
+  else if (pat === 'week_big_plus') out.push(head + pick(['しっかり積み上がった一週間でした！', 'いい流れの週でしたね。この感じを覚えておきましょう。'], seed));
+  else if (pat === 'week_plus') out.push(head + pick(['小さくてもプラスで終われました。', 'ちょっとずつ前に進めた週です。'], seed));
+  else if (pat === 'week_flat') out.push(head + pick(['とんとんで、崩れずに踏んばれました。', 'プラマイほぼゼロ。守りきった週です。'], seed));
+  else if (pat === 'week_minus') out.push(head + pick(['少しマイナスですが、こういう週もあります。', 'ちょっと向かい風の週でしたね。'], seed));
+  else out.push(head + pick(['きつい週でしたね。それでも記録を続けたのはえらいです。', '数字はへこみましたが、ここからまた積み上げればだいじょうぶ。'], seed));
+  if (prev && prev.n) {
+    const dr = ws.net - prev.net, dw = ws.wr - prev.wr;
+    if (dr > 0 && dw > 0) out.push(`前の週（${sgn(prev.net)}RR・勝率 ${prev.wr}%）より、RR も勝率も上がっています。いい伸び方です！`);
+    else if (dr > 0) out.push(`前の週より RR は ${sgn(dr)}。${dw < 0 ? '勝率は少し下がったけど、' : ''}数字は上向きです。`);
+    else if (dw > 0) out.push(`前の週より勝率は ${dw}ポイント上がっています。RR はあとからついてきますよ。`);
+    else if (dr === 0 && dw === 0) out.push('前の週とほぼ同じ。安定してきた証拠です。');
+    else out.push(`前の週（${sgn(prev.net)}RR・勝率 ${prev.wr}%）よりは少し下がりました。波はあるものなので、気にしすぎずにいきましょう。`);
+  } else if (prev) out.push('前の週は記録がなかったので、比べるのは来週から。');
+  const goodMap = ws.maps.find(x => x.w > 0 && x.n >= 2) || ws.maps.find(x => x.w > 0);
+  if (goodMap) out.push(`マップは ${goodMap.k} が好調（${goodMap.n}試合で${goodMap.w}勝）。`);
+  const weak = ws.maps.slice().reverse().find(x => x.n >= 2 && x.wr < 50 && (!goodMap || x.k !== goodMap.k));
+  if (weak) out.push(`${weak.k} は ${weak.n}試合で${weak.w}勝。来週はここを少し意識してみても。`);
+  const tm = ws.themes.reduce((a, t) => ({ o: a.o + t.o, n: a.n + t.n }), { o: 0, n: 0 });
+  if (tm.n) {
+    const r = tm.o / tm.n;
+    out.push(r >= 0.6 ? `テーマは ${tm.n}回中 ${tm.o}回が○。体が覚えてきていますね。` : tm.o ? `テーマは ${tm.n}回中 ${tm.o}回が○。できた回があるなら、もう半分来ています。` : `テーマは ${tm.n}回とも○なし。むずかしいテーマほど伸びしろです。`);
+  } else out.push('来週は試合の前に、テーマをひとつだけ選んでみませんか。勝ち負けとは別の「できた」が増えます。');
+  if (ws.maxW >= 3) out.push(`最高 ${ws.maxW}連勝もありました！`);
+  if (ws.maxL >= 3) out.push(`${ws.maxL}連敗のところは、10分休憩をはさめると、もっと楽になりますよ。`);
+  if (ws.best && ws.best.rr > 0) out.push(`いちばん良かったのは ${dayLabelW(ws.best.k)}（${sgn(ws.best.rr)}RR）。`);
+  out.push(ws.memos.length ? `メモは ${ws.memos.length}件。読み返すと、自分のくせが見えてきますよ。` : '試合のあとにひとことメモを残すと、来週のふり返りがもっと役に立ちます。');
+  out.push(pick(['一週間おつかれさまでした。来週も一緒にいきましょう。', '一週間おつかれさまでした。目と手首も休ませてね。', 'おつかれさまでした。来週も、となりにいますね。'], seed + 'e'));
+  return out;
+}
+function openWeek() { weekOpen = true; weekOff = 0; renderStats(); window.scrollTo(0, 0); playSeq(weekClips(weekStats(0))); }
+function weekTitle(off) { return off === 0 ? 'この1週間' : off === 1 ? 'その前の1週間' : `${off}週間前`; }
+function renderWeek() {
+  const v = $('#v-stats');
+  const ws = weekStats(weekOff), prev = weekStats(weekOff + 1);
+  const first = S.matches.length ? dayKey(Math.min(...S.matches.map(m => m.ts))) : null;
+  const canPrev = first && first < ws.from;
+  const clip = weekClip(weekPattern(ws), ws.from);
+  const review = buildWeekReview(ws, prev);
+  const rows = (arr, empty) => arr.length ? arr.map(x => `<div class="trow"><div class="row"><span class="grow">${esc(x.k)}</span><span class="small muted num">${x.n}試合 ${x.w}勝${x.l}敗</span><b class="num" style="width:44px;text-align:right">${x.wr}%</b><span class="small num ${cls(x.rr)}" style="width:44px;text-align:right">${sgn(x.rr)}</span></div><div class="bar" style="margin-top:4px"><i style="width:${x.wr}%"></i></div></div>`).join('') : `<p class="muted small" style="margin:0">${esc(empty)}</p>`;
+  const cmp = (k, val, unit) => `<div class="stat"><div class="k">${k}</div><div class="v ${cls(val)}">${val == null ? '<span class="muted small">−</span>' : `${val > 0 ? '↑' : val < 0 ? '↓' : '→'} ${sgn(val)}<span class="small">${unit}</span>`}</div></div>`;
+  const dayRow = (lbl, x) => `<div class="trow"><div class="tiny muted">${lbl}</div><div class="row"><span class="grow">${dayLabelW(x.k)}</span><span class="small muted num">${x.n}試合 ${x.w}勝${x.l}敗</span><b class="num ${cls(x.rr)}" style="width:48px;text-align:right">${sgn(x.rr)}</b></div></div>`;
+  v.innerHTML = `
+    <div class="row" style="margin-top:6px"><button class="btn sm ghost" data-act="weekBack">← 戦績</button><span class="grow"></span></div>
+    <div class="card weeknav" style="margin-top:10px">
+      <button class="iconbtn" data-act="wprev" aria-label="前の週" ${canPrev ? '' : 'disabled'}>◀</button>
+      <div class="grow" style="text-align:center"><b>${weekTitle(weekOff)}</b><div class="tiny muted">${dayLabelW(ws.from)} 〜 ${dayLabelW(ws.to)}</div></div>
+      <button class="iconbtn" data-act="wnext" aria-label="次の週" ${weekOff > 0 ? '' : 'disabled'}>▶</button>
+    </div>
+    <div class="card sachi-card" style="margin-top:10px">${clip ? duoHTML(clip.lines) : ''}<button class="iconbtn replay" aria-label="週のふり返りを声で聞く" data-act="weekVoice">🔊</button></div>
+    <div class="stats" style="margin-top:10px">
+      <div class="stat"><div class="k">試合</div><div class="v">${ws.n}</div></div>
+      <div class="stat"><div class="k">勝率</div><div class="v">${ws.n ? ws.wr + '%' : '−'}</div></div>
+      <div class="stat"><div class="k">RR</div><div class="v ${cls(ws.net)}">${sgn(ws.net)}</div></div>
+    </div>
+    <p class="small muted" style="margin:6px 2px 0">${ws.w}勝 ${ws.l}敗 ${ws.d}分</p>
+    <h2>前の週とくらべて<span class="sub">${dayLabel(prev.from)}〜${dayLabel(prev.to)}：${prev.n ? `${prev.n}試合・勝率 ${prev.wr}%・${sgn(prev.net)}RR` : '記録なし'}</span></h2>
+    <div class="stats" style="grid-template-columns:repeat(2,1fr)">${cmp('RR', prev.n || ws.n ? ws.net - prev.net : null, 'RR')}${cmp('勝率', prev.n && ws.n ? ws.wr - prev.wr : null, 'pt')}</div>
+    <h2>幸の講評</h2>
+    <div class="card"><div class="duo">${review.map((t, i) => `<div class="say"><span class="face ${i % 2 ? 'mio' : 'hinata'}" aria-hidden="true">${i % 2 ? 'み' : 'ひ'}</span><div class="bubble">${esc(t)}</div></div>`).join('')}</div></div>
+    <h2>日ごとのRR<span class="sub">週のはじめからの合計</span></h2>
+    <div class="card"><div class="chart" id="weekChart"></div></div>
+    <h2>いい日・つらい日</h2>
+    <div class="card">${ws.best ? dayRow('いちばん良かった日', ws.best) + (ws.worst ? dayRow('いちばんつらかった日', ws.worst) : '') : '<p class="muted small" style="margin:0">この週の記録はありません</p>'}
+      <div class="stats" style="grid-template-columns:repeat(2,1fr);margin-top:10px"><div class="stat"><div class="k">最長の連勝</div><div class="v plus">${ws.maxW}<span class="small">連勝</span></div></div><div class="stat"><div class="k">最長の連敗</div><div class="v minus">${ws.maxL}<span class="small">連敗</span></div></div></div></div>
+    <h2>マップ別<span class="sub">勝率の高い順</span></h2><div class="card">${rows(ws.maps, 'マップを選んで記録すると出ます')}</div>
+    <h2>エージェント別<span class="sub">勝率の高い順</span></h2><div class="card">${rows(ws.agents, 'エージェントを選んで記録すると出ます')}</div>
+    <h2>テーマの達成率<span class="sub">この週</span></h2>
+    <div class="card">${ws.themes.length ? ws.themes.map(x => `<div class="trow"><div class="row"><span class="grow">${esc(x.k)}</span><b class="num">${x.rate}%</b></div>
+      <div class="stack" aria-hidden="true">${['o', 'm', 'x'].map(k => x[k] ? `<i class="${k}" style="flex:${x[k]}"></i>` : '').join('')}</div>
+      <div class="tiny muted">○${x.o}　△${x.m}　×${x.x}（${x.n}試合）</div></div>`).join('') : '<p class="muted small" style="margin:0">この週はテーマの ○△× がありません</p>'}</div>
+    <h2>この週のメモ<span class="sub">${ws.memos.length}件・タップで直せます</span></h2>
+    <div class="card">${ws.memos.length ? `<div class="mlist">${ws.memos.map(m => `<button class="m" data-edit="${m.id}"><span class="badge ${m.result}">${RES1[m.result]}</span>
+      <span class="grow"><div class="wmemo">${esc(m.memo)}</div><div class="tiny muted t">${dayLabelW(dayKey(m.ts))} ${hm(m.ts)}${m.map ? '・' + esc(m.map) : ''}${m.agent ? '・' + esc(m.agent) : ''}・${RES[m.result]}</div></span>
+      <span class="rr ${cls(m.rr)}">${sgn(m.rr || 0)}</span></button>`).join('')}</div>` : '<p class="muted small" style="margin:0">この週のメモはありません。記録のときの「ひとことメモ」がここに並びます</p>'}</div>`;
+  let c = 0;
+  drawLine($('#weekChart'), ws.n ? ws.byDay.map(x => { c += x.rr; return { x: dayLabel(x.k), y: c, tip: `${dayLabelW(x.k)}：${x.n ? `${x.n}試合 ${sgn(x.rr)}` : '試合なし'}（計 ${sgn(c)}）` }; }) : [], { empty: 'この週の記録はありません' });
 }
 
 // ===== 画面：ラジオ =====
@@ -511,7 +644,7 @@ function playRadio(i) {
   const eps = (LINES && LINES.radio) || []; if (!eps.length) return;
   radioIdx = ((i % eps.length) + eps.length) % eps.length;
   const e = eps[radioIdx];
-  sfx.pause();
+  sfxQueue = []; sfx.pause();
   radioEl.src = `audio/${e.id}.mp3`; radioEl.volume = S.settings.volume;
   const p = radioEl.play(); if (p) p.catch(() => {});
   renderRadio();
@@ -557,7 +690,11 @@ function duck(reason, on) {
   }
 }
 sfx.addEventListener('play', () => duck('voice', true));
-for (const ev of ['ended', 'pause', 'error']) sfx.addEventListener(ev, () => duck('voice', false));
+// 続きがあるときは、あいだで BGM を戻さない（iPhone で一時停止→再開をくり返さないように）
+const sfxNext = () => sfxQueue.length && S.settings.voice && radioEl.paused;
+for (const ev of ['ended', 'pause', 'error']) sfx.addEventListener(ev, () => { if (ev !== 'error' && sfx.ended && sfxNext()) return; if (ev === 'pause' && !sfx.ended && sfx.paused) sfxQueue = []; duck('voice', false); });
+sfx.addEventListener('ended', () => { if (sfxNext()) { const [n, ...rest] = sfxQueue; playClip(n, rest); } else sfxQueue = []; });
+sfx.addEventListener('error', () => { sfxQueue = []; });
 radioEl.addEventListener('play', () => duck('radio', true));
 for (const ev of ['ended', 'pause', 'error']) radioEl.addEventListener(ev, () => duck('radio', false));
 function loadBgm(id) {
@@ -801,7 +938,7 @@ function renderAll() {
   if (tab === 'settings') renderSettings();
 }
 function go(t) {
-  tab = t;
+  tab = t; weekOpen = false;
   document.querySelectorAll('section.view').forEach(s => s.classList.toggle('on', s.id === 'v-' + t));
   document.querySelectorAll('nav.tabs button').forEach(b => { b.classList.toggle('on', b.dataset.tab === t); b.setAttribute('aria-current', b.dataset.tab === t ? 'page' : 'false'); });
   renderAll();
@@ -829,6 +966,10 @@ document.addEventListener('click', e => {
   if (a === 'scrim') { if (e.target === t) { F = null; renderSheet(); } return; }
   if (a === 'close') { F = null; return renderSheet(); }
   if (a === 'record') return openSheet();
+  if (a === 'week') return openWeek();
+  if (a === 'weekBack') { weekOpen = false; renderStats(); return window.scrollTo(0, 0); }
+  if (a === 'wprev' || a === 'wnext') { weekOff = Math.max(0, weekOff + (a === 'wprev' ? 1 : -1)); return renderStats(); }
+  if (a === 'weekVoice') { if (!radioEl.paused) radioEl.pause(); return playSeq(weekClips(weekStats(weekOff))); }
   if (a === 'moreAgents') { showAllAgents = true; return renderSheet(); }
   if (a === 'newAgent') { const v = (prompt('エージェント名') || '').trim().slice(0, 20); if (v) F.agent = v; return renderSheet(); }
   if (a === 'undo') return undoLast();
@@ -863,7 +1004,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && F) { F = n
 let rsT; addEventListener('resize', () => { clearTimeout(rsT); rsT = setTimeout(renderAll, 200); });
 
 // テスト・のちの拡張用
-window.__soloq = { get S() { return S; }, load, save, addMatch, afterMatch, undoLast, typicalRR, rrChips, startSession, endSession, buildReview, openSheet, saveSheet, get F() { return F; }, go, dayKey, themeStat,
+window.__soloq = { get S() { return S; }, load, save, addMatch, afterMatch, undoLast, typicalRR, rrChips, startSession, endSession, buildReview, openSheet, weekStats, weekPattern, weekClips, buildWeekReview, openWeek, get weekOff() { return weekOff; }, get sfxQueue() { return sfxQueue; }, saveSheet, get F() { return F; }, go, dayKey, themeStat,
   bgm: { el: bgmEl, get list() { return BGM; }, play: playBgm, pause: pauseBgm, next: nextBgm, setMode: setBgmMode, setVol: setBgmVol, ducks, VOL_OK, get owner() { return mediaOwner; } },
   playClip, findClip, get LINES() { return LINES; } };
 

@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-title" content="ソロQ">
 <meta name="theme-color" content="#0d1016">
 <!-- /pwa -->
-<meta name="description" content="ソロキューのおとも。戦績を10秒で記録、ひとことメモ、1試合1テーマ、今日のセッション、2人の幸のラジオ、オリジナルのチルBGM。">
+<meta name="description" content="ソロキューのおとも。戦績を10秒で記録、ひとことメモ、週のふり返り、1試合1テーマ、今日のセッション、2人の幸のラジオ、オリジナルのチルBGM。">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -208,6 +208,11 @@ details summary { cursor: pointer; color: var(--muted); font-size: 14px; margin-
 .yt-head .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .yt-frame { height: 200px; background: #000; }
 body.yt-open .wrap { padding-bottom: 260px; }
+/* 週のふり返り */
+.weekentry { display: flex; align-items: center; gap: 10px; width: 100%; margin-top: 10px; text-align: left; font: inherit; color: inherit; }
+.weeknav { display: flex; align-items: center; gap: 8px; padding: 10px; }
+.weeknav .iconbtn:disabled { opacity: .35; cursor: not-allowed; }
+.wmemo { font-size: 14px; color: var(--ink); overflow-wrap: anywhere; line-height: 1.45; }
 .tag { font-size: 11px; border-radius: 6px; padding: 1px 6px; background: var(--bg-2); color: var(--muted); white-space: nowrap; }
 
 /* 下のタブ */

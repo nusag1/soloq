@@ -1,9 +1,11 @@
 // 幸とソロQ：ホーム画面から開いたとき、電波がなくても前に開いた画面を出すためのサービスワーカー
 // ページも同じサイトのファイルもネット優先（更新をすぐ反映）。電波がないときはキャッシュ
 // BGM（bgm/*.mp3、全部で約9MB）は最初から入れない。一度流した曲だけ、裏で丸ごと取ってきて別のキャッシュにしまう
-const VERSION = 'soloq-v8';
+const VERSION = 'soloq-v9';
 const BGM_CACHE = 'soloq-bgm-1'; // 曲を作り直したら数字を上げる
-const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png', 'app.js', 'voice/lines.json', 'audio/index.json', 'bgm/index.json'];
+const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png', 'app.js', 'voice/lines.json', 'audio/index.json', 'bgm/index.json',
+  // 週のふり返りの声（小さいので先に入れておく）
+  ...['wkin1', 'wkbp1', 'wkp1', 'wkf1', 'wkm1', 'wkbm1', 'wkfw1', 'wkno1', 'wkout1'].map(id => `audio/${id}.mp3`)];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
 });
